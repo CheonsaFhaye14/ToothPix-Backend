@@ -116,7 +116,7 @@ app.post('/api/app/login', [
 
     if (result.rows.length === 0) {
       console.log("No user found with username:", username); // Debugging line
-      return res.status(400).json({ message: 'User not found' });
+      return res.status(400).json({ message: `User not found. Please check the username: "${username}"` });
     }
 
     const user = result.rows[0];
@@ -128,11 +128,11 @@ app.post('/api/app/login', [
 
       if (!isMatch) {
         console.log("Invalid password for user:", username); // Debugging line
-        return res.status(400).json({ message: 'Invalid credentials' });
+        return res.status(400).json({ message: `Incorrect password for user: "${username}"` });
       }
 
       const token = jwt.sign(
-        { userId: user.idUsers, username: user.username, usertype: user.usertype },
+        { userId: user.idusers, username: user.username, usertype: user.usertype },
         process.env.JWT_SECRET,
         { expiresIn: '1h' }
       );
@@ -140,9 +140,9 @@ app.post('/api/app/login', [
       res.status(200).json({
         message: 'Login successful',
         token: token,
-        idUsers: user.idUsers,
+        idUsers: user.idusers,
         usertype: user.usertype,
-        user: { id: user.idUsers, username: user.username, email: user.email },
+        user: { id: user.idusers, username: user.username, email: user.email },
       });
     });
   });
