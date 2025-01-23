@@ -619,31 +619,6 @@ app.get('/api/app/appointments', (req, res) => {
   });
 });
 
-// Get All Appointments Data for a specific patient
-app.get('/api/app/pappointments/:idpatient', (req, res) => {
-  const { idpatient } = req.params;
-  const query = 'SELECT * FROM appointment WHERE idpatient = $1';
-  
-  pool.query(query, [idpatient], (err, result) => {
-    if (err) {
-      console.error('Error fetching appointments:', err.message); // Log error for debugging
-      return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
-    }
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No appointments found for this patient' });
-    }
-
-    // Return filtered appointment data
-    res.status(200).json({ appointments: result.rows });
-  });
-});
-
-
-
-
-
-
 
 
 
