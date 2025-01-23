@@ -388,49 +388,47 @@ app.post('/api/app/profile', authenticateToken, [
 });
 
 
-
-
-
-
-
-
-
-
 app.get('/api/app/profile/:idUsers', authenticateToken, (req, res) => {
-  const userId = req.params.idUsers;
-  const query = 'SELECT * FROM users WHERE idUsers = ?'; // Query all fields for the user
+  const userId = req.params.idUsers; // Extract user ID from the request parameters
+  const query = 'SELECT * FROM users WHERE idUsers = $1'; // Use $1 for parameterized queries
 
-  db.query(query, [userId], (err, results) => {
-    if (err) return res.status(500).json({ message: 'Error fetching profile', error: err.message });
-    if (results.length === 0) return res.status(404).json({ message: 'User not found' });
+  pool.query(query, [userId], (err, result) => {
+    if (err) {
+      console.error('Error fetching profile:', err.message);
+      return res.status(500).json({ message: 'Error fetching profile', error: err.message });
+    }
 
-    res.status(200).json({ profile: results[0] }); // Send all fields
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ profile: result.rows[0] }); // Send all fields in the response
   });
 });
 
 
-
-
-
 app.post('/api/app/appointments', (req, res) => {
-  console.log("Received Appointment Data:", req.body);  // Log received data
+  console.log("Received Appointment Data:", req.body); // Log received data
 
   const { idpatient, iddentist, idservice, date, status, notes } = req.body;
 
+  // Validate required fields
   if (!idpatient || !iddentist || !idservice || !date || !status) {
     return res.status(400).json({ message: 'Missing required fields' });
   }
 
   const query = `
     INSERT INTO appointment (idpatient, iddentist, idservice, date, status, notes) 
-    VALUES (?, ?, ?, ?, ?, ?)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING idappointment, idpatient, iddentist, idservice, date, status, notes
   `;
 
-  db.query(
+  pool.query(
     query,
-    [idpatient, iddentist, idservice, date, status, notes || null],
+    [idpatient, iddentist, idservice, date, status, notes || null], // Provide values for placeholders
     (err, result) => {
       if (err) {
+        console.error('Error creating appointment:', err.message); // Log the error
         return res.status(500).json({
           message: 'Error creating appointment',
           error: err.message,
@@ -439,62 +437,12 @@ app.post('/api/app/appointments', (req, res) => {
 
       res.status(201).json({
         message: 'Appointment created successfully',
-        appointment: {
-          idappointment: result.insertId,
-          idpatient,
-          iddentist,
-          idservice,
-          date,
-          status,
-          notes,
-        },
+        appointment: result.rows[0], // Return the created appointment details
       });
     }
   );
 });
 
-
-
-
-
-app.post('/api/app/appointments', authenticateToken, (req, res) => {
-  const { idpatient, iddentist, idservice, date, status, notes } = req.body;
-
-  if (!idpatient || !iddentist || !idservice || !date || !status) {
-    return res.status(400).json({ message: 'Missing required fields' });
-  }
-
-  const query = `
-    INSERT INTO appointment (idpatient, iddentist, idservice, date, status, notes) 
-    VALUES (?, ?, ?, ?, ?, ?)
-  `;
-  
-  db.query(
-    query,
-    [idpatient, iddentist, idservice, date, status, notes || null],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json({
-          message: 'Error creating appointment',
-          error: err.message,
-        });
-      }
-
-      res.status(201).json({
-        message: 'Appointment created successfully',
-        appointment: {
-          idappointment: result.insertId,
-          idpatient,
-          iddentist,
-          idservice,
-          date,
-          status,
-          notes,
-        },
-      });
-    }
-  );
-});
 
 app.delete('/api/app/appointments/:id', (req, res) => { 
   const idappointment = req.params.id;
@@ -503,37 +451,54 @@ app.delete('/api/app/appointments/:id', (req, res) => {
     return res.status(400).json({ message: 'Appointment ID is required' });
   }
 
-  const query = 'DELETE FROM appointment WHERE idappointment = ?';
+  const query = 'DELETE FROM appointment WHERE idappointment = $1';
 
-  db.query(query, [idappointment], (err, results) => {
+  pool.query(query, [idappointment], (err, result) => {
     if (err) {
+      console.error('Error deleting appointment:', err.message); // Log the error for debugging
       return res.status(500).json({
         message: 'Error deleting appointment',
         error: err.message,
       });
     }
 
-    if (results.affectedRows === 0) {
+    if (result.rowCount === 0) { // PostgreSQL uses `rowCount` instead of `affectedRows`
       return res.status(404).json({ message: 'Appointment not found' });
     }
 
     res.status(200).json({ message: 'Appointment deleted successfully' });
   });
 });
-app.get('/api/app/patients', (req, res) => {
-  const query = 'SELECT * FROM users WHERE usertype = "patient"';
 
-  db.query(query, (err, results) => {
+app.get('/api/app/patients', (req, res) => {
+  const query = 'SELECT * FROM users WHERE usertype = $1';
+
+  pool.query(query, ['patient'], (err, result) => {
     if (err) {
+      console.error('Error fetching patients:', err.message); // Log the error for debugging
       return res.status(500).json({ message: 'Error fetching patients', error: err.message });
     }
-    if (results.length === 0) {
+
+    if (result.rows.length === 0) { // PostgreSQL uses `rows` for results
       return res.status(404).json({ message: 'No patients found' });
     }
 
-    res.status(200).json({ patients: results });
+    res.status(200).json({ patients: result.rows }); // Use `rows` to access the query results
   });
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 app.get('/api/app/appointmentsrecord/:idpatient', (req, res) => {
   const idpatient = req.params.idpatient;
