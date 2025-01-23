@@ -52,44 +52,45 @@ const authenticateToken = (req, res, next) => {
 // Define saltRounds
 const saltRounds = 10;
 
-// User Registration Endpoint
+
 app.post("/register", async (req, res) => {
-    const { name, email, password, usertype } = req.body; // Extract usertype from request body
+  const { name, email, password, usertype, username } = req.body; // Extract username from request body
 
-    // Ensure usertype is provided
-    if (!usertype) {
-        return res.status(400).json({ message: "User type is required" });
+  // Ensure all required fields are provided
+  if (!username || !name || !email || !password || !usertype) {
+    return res.status(400).json({ message: "All fields (name, email, password, usertype, username) are required" });
+  }
+
+  try {
+    // Check if the email already exists
+    const existingUser = await pool.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ message: "Email already registered" });
     }
 
-    try {
-        // Check if the email already exists
-        const existingUser = await pool.query(
-            "SELECT * FROM users WHERE email = $1",
-            [email]
-        );
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        if (existingUser.rows.length > 0) {
-            return res.status(400).json({ message: "Email already registered" });
-        }
+    // Insert the new user into the database (username is now included)
+    const newUser = await pool.query(
+      "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
+      [username, email, hashedPassword, usertype]
+    );
 
-        // Hash the password using bcrypt
-        const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-        // Insert the new user into the database (only username, email, password, and usertype)
-        const newUser = await pool.query(
-            "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
-            [name, email, hashedPassword, usertype]
-        );
-
-        res.status(201).json({
-            message: "User registered successfully",
-            user: newUser.rows[0],
-        });
-    } catch (err) {
-        console.error("Error in /register:", err.message);
-        res.status(500).json({ message: "Internal server error", error: err.message });
-    }
+    res.status(201).json({
+      message: "User registered successfully",
+      user: newUser.rows[0],
+    });
+  } catch (err) {
+    console.error("Error in /register:", err.message);
+    res.status(500).json({ message: "Internal server error", error: err.message });
+  }
 });
+
 
 
 
