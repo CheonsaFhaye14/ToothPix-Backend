@@ -63,10 +63,11 @@ app.post("/register", async (req, res) => {
 
   try {
     // Check if the email already exists
-    const existingUser = await pool.query(
-      "SELECT * FROM users WHERE email = $2",
-      [email]
-    );
+const existingUser = await pool.query(
+  "SELECT * FROM users WHERE email = $1",  // Use $1 instead of $2
+  [email]
+);
+
 
     if (existingUser.rows.length > 0) {
       return res.status(400).json({ message: "Email already registered" });
