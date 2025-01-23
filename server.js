@@ -189,6 +189,29 @@ app.post('/api/app/services', [
   });
 });
 
+// Delete Service
+app.delete('/api/app/services/:id', (req, res) => {
+  const serviceId = req.params.id;
+  const query = 'DELETE FROM service WHERE idservice = $1';
+
+  pool.query(query, [serviceId], (err, result) => {
+    if (err) {
+      console.error('Error deleting service:', err.message);
+      return res.status(500).json({ message: 'Error deleting service', error: err.message });
+    }
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Service not found' });
+    }
+
+    res.status(200).json({ message: 'Service deleted successfully' });
+  });
+});
+
+
+
+
+
 
 
 
@@ -348,17 +371,7 @@ app.post('/api/app/appointments', (req, res) => {
 
 
 
-// Delete Service
-app.delete('/api/app/services/:id', (req, res) => {
-  const serviceId = req.params.id;
-  const query = 'DELETE FROM service WHERE idservice = ?';
 
-  db.query(query, [serviceId], (err) => {
-    if (err) return res.status(500).json({ message: 'Error deleting service', error: err.message });
-
-    res.status(200).json({ message: 'Service deleted successfully' });
-  });
-});
 
 app.post('/api/app/appointments', authenticateToken, (req, res) => {
   const { idpatient, iddentist, idservice, date, status, notes } = req.body;
