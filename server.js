@@ -148,6 +148,21 @@ app.post('/api/app/login', [
   });
 });
 
+// Get All Services
+app.get('/api/app/services', authenticateToken, (req, res) => {
+  const query = 'SELECT * FROM service';  // Assuming there is a service table
+
+  pool.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching services:', err.message);
+      return res.status(500).json({ message: 'Error fetching services', error: err.message });
+    }
+
+    res.status(200).json({ message: 'Services fetched successfully', services: results.rows });
+  });
+});
+
+
 
 
 app.put('/api/app/appointments/update-past', (req, res) => {
@@ -285,16 +300,6 @@ app.post('/api/app/services', [
   });
 });
 
-// Get All Services
-app.get('/api/app/services', (req, res) => {
-  const query = 'SELECT * FROM service';
-
-  db.query(query, (err, results) => {
-    if (err) return res.status(500).json({ message: 'Error fetching services', error: err.message });
-
-    res.status(200).json({ message: 'Services fetched successfully', services: results });
-  });
-});
 
 app.post('/api/app/appointments', (req, res) => {
   console.log("Received Appointment Data:", req.body);  // Log received data
