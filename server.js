@@ -208,24 +208,28 @@ app.delete('/api/app/services/:id', (req, res) => {
   });
 });
 
-// Editing service
-app.put('/api/app/services/:id', [
+//editing service
+  app.put('/api/app/services/:id', [
   body('name').optional().isLength({ min: 3 }).withMessage('Service name must be at least 3 characters long'),
   body('price').optional().isDecimal().withMessage('Price must be a valid number'),
   body('description').optional().isLength({ min: 1 }).withMessage('Description must not be empty'),
-], (req, res) => {
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const serviceId = req.params.id;  // This is where the service ID comes in
+  const serviceId = parseInt(req.params.id, 10); // Parse and validate the ID as an integer
+  if (isNaN(serviceId)) {
+    return res.status(400).json({ message: 'Invalid service ID' });
+  }
+
   const { name, description, price } = req.body;
 
+  // Dynamically build the SET clause
   const updates = [];
   const values = [];
 
-  // Construct the SET clause for the query dynamically based on provided fields
   if (name) {
     updates.push(`name = $${updates.length + 1}`);
     values.push(name);
@@ -239,29 +243,37 @@ app.put('/api/app/services/:id', [
     values.push(price);
   }
 
+  // Ensure at least one field is being updated
   if (updates.length === 0) {
     return res.status(400).json({ message: 'No fields provided for update' });
   }
 
-  // Add the serviceId at the end for the WHERE clause
+  // Add the service ID to the values array
   values.push(serviceId);
 
   // Update query for PostgreSQL
-  const query = `UPDATE service SET ${updates.join(', ')} WHERE idservice = $${values.length} RETURNING *`;
+  const query = `
+    UPDATE service
+    SET ${updates.join(', ')}
+    WHERE idservice = $${values.length}
+    RETURNING *`;
 
-  db.query(query, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ message: 'Error updating service', error: err.message });
-    }
-    
+  try {
+    const result = await pool.query(query, values);
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Service not found' });
     }
 
-    res.status(200).json({ message: 'Service updated successfully', service: result.rows[0] });
-  });
+    res.status(200).json({
+      message: 'Service updated successfully',
+      service: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Error updating service:', err.message);
+    res.status(500).json({ message: 'Error updating service', error: err.message });
+  }
 });
-
 
 
 
