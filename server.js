@@ -140,7 +140,7 @@ app.post('/api/app/login', [
       res.status(200).json({
         message: 'Login successful',
         token: token,
-        idUsers: user.idusers,
+        idusers: user.idusers,
         usertype: user.usertype,
         user: { id: user.idusers, username: user.username, email: user.email },
       });
@@ -370,7 +370,7 @@ app.post('/api/app/profile', authenticateToken, [
   values.push(userId);
 
   // Construct the query
-  const query = `UPDATE users SET ${updates.join(', ')} WHERE idUsers = $${values.length} RETURNING *`;
+  const query = `UPDATE users SET ${updates.join(', ')} WHERE idusers = $${values.length} RETURNING *`;
 
   // Execute the query
   pool.query(query, values, (err, result) => {
