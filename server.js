@@ -64,7 +64,7 @@ app.post("/register", async (req, res) => {
   try {
     // Check if the email already exists
     const existingUser = await pool.query(
-      "SELECT * FROM users WHERE email = $2",
+      "SELECT * FROM users WHERE email = $3",
       [email]
     );
 
@@ -77,7 +77,7 @@ app.post("/register", async (req, res) => {
 
     // Insert the new user into the database (username is now included)
     const newUser = await pool.query(
-      "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
+      "INSERT INTO users (username, email, password, usertype) VALUES ($2, $3, $4, $5) RETURNING *",
       [username, email, hashedPassword, usertype]
     );
 
