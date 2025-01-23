@@ -487,42 +487,36 @@ app.get('/api/app/patients', (req, res) => {
   });
 });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 app.get('/api/app/appointmentsrecord/:idpatient', (req, res) => {
   const idpatient = req.params.idpatient;
 
   const query = `
     SELECT 
-      a.idappointment, a.notes, 
+      a.idappointment, 
+      a.notes, 
       s.price AS service_price
     FROM appointment a
     JOIN service s ON a.idservice = s.idservice
-    WHERE a.idpatient = ? AND a.status = 'D'
+    WHERE a.idpatient = $1 AND a.status = 'D'
   `;
 
-  db.query(query, [idpatient], (err, results) => {
-    if (err) return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
-    if (results.length === 0) return res.status(404).json({ message: 'No completed appointments found' });
+  pool.query(query, [idpatient], (err, result) => {
+    if (err) {
+      console.error('Error fetching appointments:', err.message); // Log error for debugging
+      return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+    }
 
-    // Make sure the response structure matches what the frontend expects
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No completed appointments found' });
+    }
+
+    // Format the response to match the frontend's expected structure
     res.status(200).json({
-      appointments: results.map((appointment) => ({
+      appointments: result.rows.map((appointment) => ({
         idappointment: appointment.idappointment,
         notes: appointment.notes,
-        service_price: appointment.service_price, // Return service_price as expected
-      }))
+        service_price: appointment.service_price, // Ensure service_price is included
+      })),
     });
   });
 });
@@ -535,32 +529,39 @@ app.get('/api/app/summary', (req, res) => {
     FROM appointment
   `;
 
-  db.query(query, (err, results) => {
+  pool.query(query, (err, result) => {
     if (err) {
+      console.error('Error fetching summary:', err.message); // Log error for debugging
       return res.status(500).json({ message: 'Error fetching summary', error: err.message });
     }
 
+    const summary = result.rows[0]; // Access the first row of the result
     res.status(200).json({
-      total_appointments: results[0].total_appointments,
-      total_clinic_visits: results[0].total_clinic_visits,
+      total_appointments: summary.total_appointments || 0,
+      total_clinic_visits: summary.total_clinic_visits || 0,
     });
   });
 });
 
-
 app.get('/api/app/dentists', (req, res) => {
-  const query = 'SELECT idUsers, firstname, lastname FROM users WHERE usertype = "dentist"';
+  const query = `
+    SELECT idUsers, firstname, lastname 
+    FROM users 
+    WHERE usertype = 'dentist'
+  `;
 
-  db.query(query, (err, results) => {
+  pool.query(query, (err, result) => {
     if (err) {
+      console.error('Error fetching dentists:', err.message); // Log error for debugging
       return res.status(500).json({ message: 'Error fetching dentists', error: err.message });
     }
-    if (results.length === 0) {
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No dentists found' });
     }
 
     // Add a 'name' property to each dentist by combining firstname and lastname
-    const dentistsWithNames = results.map(dentist => ({
+    const dentistsWithNames = result.rows.map(dentist => ({
       ...dentist,
       name: `${dentist.firstname} ${dentist.lastname}`, // Combine firstname and lastname
     }));
@@ -568,19 +569,27 @@ app.get('/api/app/dentists', (req, res) => {
     res.status(200).json({ dentists: dentistsWithNames });
   });
 });
-app.get('/api/app/patients', (req, res) => {
-  const query = 'SELECT idUsers, firstname, lastname FROM users WHERE usertype = "patient"';
 
-  db.query(query, (err, results) => {
+
+app.get('/api/app/patients', (req, res) => {
+  const query = `
+    SELECT idUsers, firstname, lastname 
+    FROM users 
+    WHERE usertype = 'patient'
+  `;
+
+  pool.query(query, (err, result) => {
     if (err) {
+      console.error('Error fetching patients:', err.message); // Log error for debugging
       return res.status(500).json({ message: 'Error fetching patients', error: err.message });
     }
-    if (results.length === 0) {
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No patients found' });
     }
 
     // Add a 'name' property to each patient by combining firstname and lastname
-    const patientsWithNames = results.map(patient => ({
+    const patientsWithNames = result.rows.map(patient => ({
       ...patient,
       name: `${patient.firstname} ${patient.lastname}`, // Combine firstname and lastname
     }));
@@ -590,18 +599,35 @@ app.get('/api/app/patients', (req, res) => {
 });
 
 
-  // Get All Appointments Data
-  app.get('/api/app/appointments', (req, res) => {
-    const query = 'SELECT * FROM appointment';
 
-    db.query(query, (err, results) => {
-      if (err) return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
-      if (results.length === 0) return res.status(404).json({ message: 'No appointments found' });
+// Get All Appointments Data
+app.get('/api/app/appointments', (req, res) => {
+  const query = 'SELECT * FROM appointment';
 
-      // Return all appointment data
-      res.status(200).json({ appointments: results });
-    });
+  pool.query(query, (err, result) => {
+    if (err) {
+      console.error('Error fetching appointments:', err.message); // Log error for debugging
+      return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+    }
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
+    }
+
+    // Return all appointment data
+    res.status(200).json({ appointments: result.rows });
   });
+});
+
+
+
+
+
+
+
+
+
+
 
 
 
