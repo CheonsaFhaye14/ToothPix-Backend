@@ -49,6 +49,9 @@ const authenticateToken = (req, res, next) => {
 };
 
 // User Registration Endpoint
+// Define saltRounds
+const saltRounds = 10;
+
 // User Registration Endpoint
 app.post("/register", async (req, res) => {
     const { name, email, password, usertype } = req.body; // Extract usertype from request body
@@ -69,7 +72,7 @@ app.post("/register", async (req, res) => {
             return res.status(400).json({ message: "Email already registered" });
         }
 
-        // Hash the password
+        // Hash the password using bcrypt
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
         // Insert the new user into the database (only username, email, password, and usertype)
@@ -87,6 +90,7 @@ app.post("/register", async (req, res) => {
         res.status(500).json({ message: "Internal server error", error: err.message });
     }
 });
+
 
 
 // User Login Endpoint
