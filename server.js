@@ -49,8 +49,14 @@ const authenticateToken = (req, res, next) => {
 };
 
 // User Registration Endpoint
+// User Registration Endpoint
 app.post("/register", async (req, res) => {
-    const { name, email, password } = req.body;
+    const { name, email, password, usertype } = req.body; // Extract usertype from request body
+
+    // Ensure usertype is provided
+    if (!usertype) {
+        return res.status(400).json({ message: "User type is required" });
+    }
 
     try {
         // Check if the email already exists
@@ -66,10 +72,10 @@ app.post("/register", async (req, res) => {
         // Hash the password
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        // Insert the new user into the database
+        // Insert the new user into the database (only username, email, password, and usertype)
         const newUser = await pool.query(
-            "INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING *",
-            [name, email, hashedPassword]
+            "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
+            [name, email, hashedPassword, usertype]
         );
 
         res.status(201).json({
