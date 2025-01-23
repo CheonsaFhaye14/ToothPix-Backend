@@ -54,17 +54,17 @@ const saltRounds = 10;
 
 
 app.post("/register", async (req, res) => {
-  const { name, email, password, usertype, username } = req.body; // Extract username from request body
+  const { username, email, password, usertype } = req.body; // Extract username from request body
 
   // Ensure all required fields are provided
-  if (!username || !name || !email || !password || !usertype) {
+  if (!username || !email || !password || !usertype) {
     return res.status(400).json({ message: "All fields (name, email, password, usertype, username) are required" });
   }
 
   try {
     // Check if the email already exists
     const existingUser = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
+      "SELECT * FROM users WHERE email = $2",
       [email]
     );
 
