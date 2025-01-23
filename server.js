@@ -162,6 +162,35 @@ app.get('/api/app/services', (req, res) => {
   });
 });
 
+// Add Service
+app.post('/api/app/services', [
+  body('name').isLength({ min: 3 }).withMessage('Service name must be at least 3 characters long'),
+  body('price').isDecimal().withMessage('Price must be a valid number'),
+], (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { name, description, price } = req.body;
+  const query = 'INSERT INTO service (name, description, price) VALUES ($1, $2, $3) RETURNING idservice, name, description, price';
+
+  pool.query(query, [name, description, price], (err, result) => {
+    if (err) {
+      console.error('Error adding service:', err.message);
+      return res.status(500).json({ message: 'Error adding service', error: err.message });
+    }
+
+    const service = result.rows[0];
+    res.status(201).json({
+      message: 'Service added successfully',
+      service,
+    });
+  });
+});
+
+
+
 
 
 
@@ -274,31 +303,6 @@ app.put('/api/app/services/:id', [
 });
 
 
-
-// CRUD Operations for Services
-
-// Add Service
-app.post('/api/app/services', [
-  body('name').isLength({ min: 3 }).withMessage('Service name must be at least 3 characters long'),
-  body('price').isDecimal().withMessage('Price must be a valid number'),
-], (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-
-  const { name, description, price } = req.body;
-  const query = 'INSERT INTO service (name, description, price) VALUES (?, ?, ?)';
-
-  db.query(query, [name, description, price], (err, result) => {
-    if (err) return res.status(500).json({ message: 'Error adding service', error: err.message });
-
-    res.status(201).json({
-      message: 'Service added successfully',
-      service: { idservice: result.insertId, name, description, price },
-    });
-  });
-});
 
 
 app.post('/api/app/appointments', (req, res) => {
