@@ -388,9 +388,9 @@ app.post('/api/app/profile', authenticateToken, [
 });
 
 
-app.get('/api/app/profile/:idUsers', authenticateToken, (req, res) => {
-  const userId = req.params.idUsers; // Extract user ID from the request parameters
-  const query = 'SELECT * FROM users WHERE idUsers = $1'; // Use $1 for parameterized queries
+app.get('/api/app/profile/:idusers', authenticateToken, (req, res) => {
+  const userId = req.params.idusers; // Extract user ID from the request parameters
+  const query = 'SELECT * FROM users WHERE idusers = $1'; // Use $1 for parameterized queries
 
   pool.query(query, [userId], (err, result) => {
     if (err) {
@@ -545,7 +545,7 @@ app.get('/api/app/summary', (req, res) => {
 
 app.get('/api/app/dentists', (req, res) => {
   const query = `
-    SELECT idUsers, firstname, lastname 
+    SELECT idusers, firstname, lastname 
     FROM users 
     WHERE usertype = 'dentist'
   `;
@@ -573,7 +573,7 @@ app.get('/api/app/dentists', (req, res) => {
 
 app.get('/api/app/patients', (req, res) => {
   const query = `
-    SELECT idUsers, firstname, lastname 
+    SELECT idusers, firstname, lastname 
     FROM users 
     WHERE usertype = 'patient'
   `;
