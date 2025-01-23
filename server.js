@@ -276,31 +276,34 @@ app.delete('/api/app/services/:id', (req, res) => {
 });
 
 
-
-
-
-
-app.put('/api/app/appointments/update-past', (req, res) => {
+app.put('/api/app/appointments/update-past', async (req, res) => {
   const query = `
     UPDATE appointment
     SET status = 'D'
-    WHERE date < CURDATE() AND status != 'D'
+    WHERE date < CURRENT_DATE AND status != 'D'
   `;
 
-  db.query(query, (err, results) => {
-    if (err) {
-      return res.status(500).json({
-        message: 'Error updating past appointments',
-        error: err.message,
-      });
-    }
+  try {
+    const result = await pool.query(query);
 
     res.status(200).json({
       message: 'Past appointments updated successfully',
-      affectedRows: results.affectedRows,
+      affectedRows: result.rowCount, // PostgreSQL uses rowCount
     });
-  });
+  } catch (err) {
+    console.error('Error updating past appointments:', err.message);
+    res.status(500).json({
+      message: 'Error updating past appointments',
+      error: err.message,
+    });
+  }
 });
+
+
+
+
+
+
 
 
 app.post('/api/app/profile', authenticateToken, [
