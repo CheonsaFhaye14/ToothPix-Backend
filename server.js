@@ -127,9 +127,9 @@ pool.query(query, [username], (err, result) => {
     res.status(200).json({
       message: 'Login successful',
       token: token,
-      idUsers: user.idUsers,
+      idUsers: user.idusers,
       usertype: user.usertype,
-      user: { id: user.idUsers, username: user.username, email: user.email },
+      user: { id: user.idusers, username: user.username, email: user.email },
     });
   });
 });
