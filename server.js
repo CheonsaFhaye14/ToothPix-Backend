@@ -488,7 +488,11 @@ app.get('/api/app/patients', (req, res) => {
 });
 
 app.get('/api/app/appointmentsrecord/:idpatient', (req, res) => {
-  const idpatient = req.params.idpatient;
+  const idpatient = parseInt(req.params.idpatient, 10); // Parse as an integer
+  
+  if (isNaN(idpatient)) {
+    return res.status(400).json({ message: 'Invalid idpatient: Must be an integer' });
+  }
 
   const query = `
     SELECT 
@@ -520,6 +524,7 @@ app.get('/api/app/appointmentsrecord/:idpatient', (req, res) => {
     });
   });
 });
+
 
 app.get('/api/app/summary', (req, res) => {
   const query = `
