@@ -208,7 +208,43 @@ app.delete('/api/app/services/:id', (req, res) => {
   });
 });
 
+//editing service
+app.put('/api/app/services/:id', [
+  body('name').optional().isLength({ min: 3 }).withMessage('Service name must be at least 3 characters long'),
+  body('price').optional().isDecimal().withMessage('Price must be a valid number'),
+  body('description').optional().isLength({ min: 1 }).withMessage('Description must not be empty'),
+], (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
 
+  const serviceId = req.params.id;  // This is where the service ID comes in
+  const { name, description, price } = req.body;
+
+  const updates = {};
+  if (name) updates.name = name;
+  if (description) updates.description = description;
+  if (price) updates.price = price;
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ message: 'No fields provided for update' });
+  }
+
+  // Update query for PostgreSQL
+  const query = 'UPDATE service SET name = $1, description = $2, price = $3 WHERE idservice = $4 RETURNING *';
+  const values = [updates.name || null, updates.description || null, updates.price || null, serviceId];
+
+  db.query(query, values, (err, result) => {
+    if (err) return res.status(500).json({ message: 'Error updating service', error: err.message });
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Service not found' });
+    }
+
+    res.status(200).json({ message: 'Service updated successfully', service: result.rows[0] });
+  });
+});
 
 
 
@@ -293,37 +329,6 @@ app.get('/api/app/profile/:idUsers', authenticateToken, (req, res) => {
   });
 });
 
-app.put('/api/app/services/:id', [
-  body('name').optional().isLength({ min: 3 }).withMessage('Service name must be at least 3 characters long'),
-  body('price').optional().isDecimal().withMessage('Price must be a valid number'),
-  body('description').optional().isLength({ min: 1 }).withMessage('Description must not be empty'),
-], (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-
-  const serviceId = req.params.id;  // This is where the service ID comes in
-  const { name, description, price } = req.body;
-
-  const updates = {};
-  if (name) updates.name = name;
-  if (description) updates.description = description;
-  if (price) updates.price = price;
-
-  if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ message: 'No fields provided for update' });
-  }
-
-  const query = 'UPDATE service SET ? WHERE idservice = ?';
-  db.query(query, [updates, serviceId], (err, result) => {
-    if (err) return res.status(500).json({ message: 'Error updating service', error: err.message });
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Service not found' });
-    }
-    res.status(200).json({ message: 'Service updated successfully' });
-  });
-});
 
 
 
