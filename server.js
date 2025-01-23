@@ -104,35 +104,50 @@ app.post('/api/app/login', [
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   const { username, password } = req.body;
-  const query = 'SELECT * FROM users WHERE username = $1';
 
-pool.query(query, [username], (err, result) => {
-  if (err) return res.status(500).json({ message: 'Error querying database' });
+  console.log("Received username:", username); // Debugging line
+  const query = 'SELECT * FROM users WHERE username = $1'; // Ensure column name is correct
 
-  console.log(result.rows); // Debugging line
+  pool.query(query, [username], (err, result) => {
+    if (err) {
+      console.error("Error querying database:", err.message); // Debugging line
+      return res.status(500).json({ message: 'Error querying database' });
+    }
 
-  if (result.rows.length === 0) return res.status(400).json({ message: 'User not found' });
+    if (result.rows.length === 0) {
+      console.log("No user found with username:", username); // Debugging line
+      return res.status(400).json({ message: 'User not found' });
+    }
 
-  const user = result.rows[0];
-  bcrypt.compare(password, user.password, (err, isMatch) => {
-    if (err) return res.status(500).json({ message: 'Error comparing passwords' });
-    if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
+    const user = result.rows[0];
+    bcrypt.compare(password, user.password, (err, isMatch) => {
+      if (err) {
+        console.error("Error comparing passwords:", err.message); // Debugging line
+        return res.status(500).json({ message: 'Error comparing passwords' });
+      }
 
-    const token = jwt.sign(
-      { userId: user.idUsers, username: user.username, usertype: user.usertype },
-      process.env.JWT_SECRET,
-      { expiresIn: '1h' }
-    );
+      if (!isMatch) {
+        console.log("Invalid password for user:", username); // Debugging line
+        return res.status(400).json({ message: 'Invalid credentials' });
+      }
 
-    res.status(200).json({
-      message: 'Login successful',
-      token: token,
-      idUsers: user.idusers,
-      usertype: user.usertype,
-      user: { id: user.idusers, username: user.username, email: user.email },
+      const token = jwt.sign(
+        { userId: user.idUsers, username: user.username, usertype: user.usertype },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+
+      res.status(200).json({
+        message: 'Login successful',
+        token: token,
+        idUsers: user.idUsers,
+        usertype: user.usertype,
+        user: { id: user.idUsers, username: user.username, email: user.email },
+      });
     });
   });
 });
+
 
 
 app.put('/api/app/appointments/update-past', (req, res) => {
