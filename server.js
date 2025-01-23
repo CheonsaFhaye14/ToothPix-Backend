@@ -299,13 +299,6 @@ app.put('/api/app/appointments/update-past', async (req, res) => {
   }
 });
 
-
-
-
-
-
-
-
 app.post('/api/app/profile', authenticateToken, [
   body('firstname').optional().isLength({ min: 1 }).withMessage('First name is required'),
   body('lastname').optional().isLength({ min: 1 }).withMessage('Last name is required'),
@@ -321,30 +314,86 @@ app.post('/api/app/profile', authenticateToken, [
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-  const userId = req.user.userId;
+  const userId = req.user.userId; // Get user ID from the authenticated token
   const { firstname, lastname, birthdate, contact, address, gender, username, email, allergies, medicalhistory } = req.body;
 
-  // Prepare the update object, excluding password
-  const updates = {};
+  const updates = [];
+  const values = [];
 
-  if (firstname) updates.firstname = firstname;
-  if (lastname) updates.lastname = lastname;
-  if (birthdate) updates.birthdate = birthdate;
-  if (contact) updates.contact = contact;
-  if (address) updates.address = address;
-  if (gender) updates.gender = gender;
-  if (username) updates.username = username;
-  if (email) updates.email = email;
-  if (allergies) updates.allergies = allergies;
-  if (medicalhistory) updates.medicalhistory = medicalhistory;
+  // Dynamically construct the SET clause and values
+  if (firstname) {
+    updates.push(`firstname = $${updates.length + 1}`);
+    values.push(firstname);
+  }
+  if (lastname) {
+    updates.push(`lastname = $${updates.length + 1}`);
+    values.push(lastname);
+  }
+  if (birthdate) {
+    updates.push(`birthdate = $${updates.length + 1}`);
+    values.push(birthdate);
+  }
+  if (contact) {
+    updates.push(`contact = $${updates.length + 1}`);
+    values.push(contact);
+  }
+  if (address) {
+    updates.push(`address = $${updates.length + 1}`);
+    values.push(address);
+  }
+  if (gender) {
+    updates.push(`gender = $${updates.length + 1}`);
+    values.push(gender);
+  }
+  if (username) {
+    updates.push(`username = $${updates.length + 1}`);
+    values.push(username);
+  }
+  if (email) {
+    updates.push(`email = $${updates.length + 1}`);
+    values.push(email);
+  }
+  if (allergies) {
+    updates.push(`allergies = $${updates.length + 1}`);
+    values.push(allergies);
+  }
+  if (medicalhistory) {
+    updates.push(`medicalhistory = $${updates.length + 1}`);
+    values.push(medicalhistory);
+  }
 
-  // Update the user profile without modifying the password
-  const query = 'UPDATE users SET ? WHERE idUsers = ?';
-  db.query(query, [updates, userId], (err) => {
-    if (err) return res.status(500).json({ message: 'Error updating profile', error: err.message });
-    res.status(200).json({ message: 'Profile updated successfully' });
+  if (updates.length === 0) {
+    return res.status(400).json({ message: 'No fields provided for update' });
+  }
+
+  // Add the userId as the last parameter for the WHERE clause
+  values.push(userId);
+
+  // Construct the query
+  const query = `UPDATE users SET ${updates.join(', ')} WHERE idUsers = $${values.length} RETURNING *`;
+
+  // Execute the query
+  pool.query(query, values, (err, result) => {
+    if (err) {
+      console.error('Error updating profile:', err.message);
+      return res.status(500).json({ message: 'Error updating profile', error: err.message });
+    }
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ message: 'Profile updated successfully', user: result.rows[0] });
   });
 });
+
+
+
+
+
+
+
+
 
 
 app.get('/api/app/profile/:idUsers', authenticateToken, (req, res) => {
