@@ -49,35 +49,39 @@ const authenticateToken = (req, res, next) => {
 };
 
 // User Registration Endpoint
-app.post('/api/app/register', [
-  body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
-  body('email').isEmail().withMessage('Invalid email format'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
-  body('usertype').isIn(['patient', 'dentist']).withMessage('User type must be either "patient" or "dentist"')
-], (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
+app.post("/register", async (req, res) => {
+    const { name, email, password } = req.body;
 
-  const { username, email, password, usertype } = req.body;
-  const checkQuery = 'SELECT * FROM users WHERE username = $1 OR email = $2';
+    try {
+        // Check if the email already exists
+        const existingUser = await pool.query(
+            "SELECT * FROM users WHERE email = $1",
+            [email]
+        );
 
-  pool.query(checkQuery, [username, email], (err, result) => {
-    if (err) return res.status(500).json({ message: 'Error checking for existing user' });
-    if (result.rows.length > 0) return res.status(400).json({ message: 'Username or email already exists' });
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({ message: "Email already registered" });
+        }
 
-    bcrypt.hash(password, 10, (err, hashedPassword) => {
-      if (err) return res.status(500).json({ message: 'Error hashing password' });
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-      const query = 'INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4)';
-      pool.query(query, [username, email, hashedPassword, usertype], (err) => {
-        if (err) return res.status(500).json({ message: 'Error registering user' });
-        res.status(201).json({ message: 'User registered successfully' });
-      });
-    });
-  });
+        // Insert the new user into the database
+        const newUser = await pool.query(
+            "INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING *",
+            [name, email, hashedPassword]
+        );
+
+        res.status(201).json({
+            message: "User registered successfully",
+            user: newUser.rows[0],
+        });
+    } catch (err) {
+        console.error("Error in /register:", err.message);
+        res.status(500).json({ message: "Internal server error", error: err.message });
+    }
 });
+
 
 // User Login Endpoint
 app.post('/api/app/login', [
