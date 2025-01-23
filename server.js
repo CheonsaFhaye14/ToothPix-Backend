@@ -58,7 +58,7 @@ app.post("/register", async (req, res) => {
 
   // Ensure all required fields are provided
   if (!username || !email || !password || !usertype) {
-    return res.status(400).json({ message: "All fields (name, email, password, usertype, username) are required" });
+    return res.status(400).json({ message: "All fields (email, password, usertype, username) are required" });
   }
 
   try {
