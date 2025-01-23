@@ -149,7 +149,7 @@ app.post('/api/app/login', [
 });
 
 // Get All Services
-app.get('/api/app/services', authenticateToken, (req, res) => {
+app.get('/api/app/services', (req, res) => {
   const query = 'SELECT * FROM service';  // Assuming there is a service table
 
   pool.query(query, (err, results) => {
