@@ -527,14 +527,21 @@ app.get('/api/app/appointmentsrecord/:idpatient', (req, res) => {
 
 
 app.get('/api/app/summary', (req, res) => {
+  const idusers = req.query.idusers; // Extract idusers from the request query parameters
+  
+  if (!idusers) {
+    return res.status(400).json({ message: 'Missing idusers parameter' });
+  }
+
   const query = `
     SELECT 
       COUNT(CASE WHEN status = 'N' THEN 1 END) AS total_appointments,
       COUNT(CASE WHEN status = 'D' THEN 1 END) AS total_clinic_visits
     FROM appointment
+    WHERE idpatient = $1
   `;
 
-  pool.query(query, (err, result) => {
+  pool.query(query, [idusers], (err, result) => {
     if (err) {
       console.error('Error fetching summary:', err.message); // Log error for debugging
       return res.status(500).json({ message: 'Error fetching summary', error: err.message });
@@ -547,6 +554,7 @@ app.get('/api/app/summary', (req, res) => {
     });
   });
 });
+
 
 app.get('/api/app/dentists', (req, res) => {
   const query = `
