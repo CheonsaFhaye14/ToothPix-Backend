@@ -275,15 +275,46 @@ app.delete('/api/app/services/:id', (req, res) => {
   }
 });
 
+// PUT endpoint to update past appointments
+app.put('/api/app/appointments/update-status', async (req, res) => {
+    try {
+        const { currentDate } = req.body; // Assume currentDate is passed in YYYY-MM-DD format
 
-const updatePastAppointments = async () => {
-  const today = new Date();
-  const result = await Appointment.updateMany(
-    { date: { $lt: today }, status: { $ne: 'D' } },
-    { status: 'D' }
-  );
-  return result;
-};
+        // Validate currentDate
+        if (!currentDate) {
+            return res.status(400).json({ message: 'Current date is required' });
+        }
+
+        // SQL query to update appointments with past dates and status != 'D'
+        const query = `
+            UPDATE appointment
+            SET status = 'D'
+            WHERE date < $1 AND status != 'D'
+            RETURNING *
+        `;
+
+        // Execute the query
+        const result = await pool.query(query, [currentDate]);
+
+        // Check if any rows were updated
+        if (result.rowCount === 0) {
+            return res.status(200).json({ message: 'No appointments required updating.' });
+        }
+
+        // Respond with updated rows
+        res.status(200).json({
+            message: 'Appointments updated successfully',
+            updatedAppointments: result.rows,
+        });
+    } catch (error) {
+        console.error('Error updating appointment status:', error.message);
+        res.status(500).json({
+            message: 'Error updating appointment status',
+            error: error.message,
+        });
+    }
+});
+
 
 
 app.post('/api/app/profile', authenticateToken, [
