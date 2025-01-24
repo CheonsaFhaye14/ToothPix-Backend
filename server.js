@@ -286,10 +286,17 @@ app.put('/api/app/appointments/update-past', async (req, res) => {
   try {
     const result = await pool.query(query);
 
-    res.status(200).json({
-      message: 'Past appointments updated successfully',
-      affectedRows: result.rowCount, // PostgreSQL uses rowCount
-    });
+    // If no rows were updated, result.rowCount will be 0.
+    if (result.rowCount > 0) {
+      res.status(200).json({
+        message: 'Past appointments updated successfully',
+        affectedRows: result.rowCount, // Number of affected rows
+      });
+    } else {
+      res.status(200).json({
+        message: 'No past appointments to update',
+      });
+    }
   } catch (err) {
     console.error('Error updating past appointments:', err.message);
     res.status(500).json({
@@ -298,6 +305,7 @@ app.put('/api/app/appointments/update-past', async (req, res) => {
     });
   }
 });
+
 
 app.post('/api/app/profile', authenticateToken, [
   body('firstname').optional().isLength({ min: 1 }).withMessage('First name is required'),
