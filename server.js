@@ -535,8 +535,8 @@ app.get('/api/app/summary', (req, res) => {
 
   const query = `
     SELECT 
-      COUNT(CASE WHEN status = 'N' THEN 1 END) AS total_appointments,
-      COUNT(CASE WHEN status = 'D' THEN 1 END) AS total_clinic_visits
+      COALESCE(COUNT(CASE WHEN status = 'N' THEN 1 END), 0) AS total_appointments,
+      COALESCE(COUNT(CASE WHEN status = 'D' THEN 1 END), 0) AS total_clinic_visits
     FROM appointment
     WHERE idpatient = $1
   `;
@@ -547,10 +547,10 @@ app.get('/api/app/summary', (req, res) => {
       return res.status(500).json({ message: 'Error fetching summary', error: err.message });
     }
 
-    const summary = result.rows[0]; // Access the first row of the result
+    const summary = result.rows[0] || { total_appointments: 0, total_clinic_visits: 0 }; // Handle empty results
     res.status(200).json({
-      total_appointments: summary.total_appointments || 0,
-      total_clinic_visits: summary.total_clinic_visits || 0,
+      total_appointments: summary.total_appointments,
+      total_clinic_visits: summary.total_clinic_visits,
     });
   });
 });
