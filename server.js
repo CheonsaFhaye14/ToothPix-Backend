@@ -276,35 +276,14 @@ app.delete('/api/app/services/:id', (req, res) => {
 });
 
 
-app.put('/api/app/appointments/update-past', async (req, res) => {
-  const query = `
-    UPDATE appointment
-    SET status = 'D'
-    WHERE date < CURRENT_DATE AND status != 'D'
-  `;
-
-  try {
-    const result = await pool.query(query);
-
-    // If no rows were updated, result.rowCount will be 0.
-    if (result.rowCount > 0) {
-      res.status(200).json({
-        message: 'Past appointments updated successfully',
-        affectedRows: result.rowCount, // Number of affected rows
-      });
-    } else {
-      res.status(200).json({
-        message: 'No past appointments to update',
-      });
-    }
-  } catch (err) {
-    console.error('Error updating past appointments:', err.message);
-    res.status(500).json({
-      message: 'Error updating past appointments',
-      error: err.message,
-    });
-  }
-});
+const updatePastAppointments = async () => {
+  const today = new Date();
+  const result = await Appointment.updateMany(
+    { date: { $lt: today }, status: { $ne: 'D' } },
+    { status: 'D' }
+  );
+  return result;
+};
 
 
 app.post('/api/app/profile', authenticateToken, [
