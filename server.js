@@ -59,41 +59,68 @@ const authenticateToken = (req, res, next) => {
 // Define saltRounds for bcrypt
 const saltRounds = 10;
 
+// Utility function to create the table if it doesn't exist
+const createTableIfNotExists = async () => {
+  try {
+    // Create the table if it doesn't exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        idusers SERIAL PRIMARY KEY,
+        username VARCHAR(100) NOT NULL UNIQUE,
+        email VARCHAR(100) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        usertype VARCHAR(50) NOT NULL,
+        firstname VARCHAR(100),
+        lastname VARCHAR(100),
+        birthdate DATE,
+        contact VARCHAR(50),
+        address TEXT,
+        gender VARCHAR(20),
+        allergies TEXT,
+        medicalhistory TEXT
+      );
+    `);
 
-// User Registration Endpoint
+    console.log("Table 'users' ensured to exist.");
+  } catch (err) {
+    console.error("Error creating table:", err);
+  }
+};
+
+// Middleware to create the table before processing each request
+const checkAndCreateTable = async (req, res, next) => {
+  await createTableIfNotExists();
+  next(); // Proceed to the next middleware/route handler
+};
+
+// Use the middleware to ensure the table exists before handling any POST requests
+app.use(checkAndCreateTable);
+
+
+// Register route
 app.post("/register", async (req, res) => {
-  const { username, email, password, usertype } = req.body; // Extract username from request body
+  const { username, email, password, usertype } = req.body;
 
-
-  // Ensure all required fields are provided
   if (!username || !email || !password || !usertype) {
     return res.status(400).json({ message: "All fields (email, password, usertype, username) are required" });
   }
 
-
   try {
     // Check if the email already exists
-    const existingUser = await pool.query(
-      "SELECT * FROM users WHERE email = $1",  // Use $1 instead of $2
-      [email]
-    );
-
+    const existingUser = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
 
     if (existingUser.rows.length > 0) {
       return res.status(400).json({ message: "Email already registered" });
     }
 
-
-    // Hash the password using bcrypt
+    // Hash the password
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-
-    // Insert the new user into the database (username is now included)
+    // Insert the new user into the database
     const newUser = await pool.query(
       "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
       [username, email, hashedPassword, usertype]
     );
-
 
     res.status(201).json({
       message: "User registered successfully",
@@ -104,8 +131,6 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
-
-
 // User Login Endpoint
 app.post('/api/app/login', [
   body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
