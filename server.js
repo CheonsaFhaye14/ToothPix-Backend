@@ -6,11 +6,11 @@ const jwt = require('jsonwebtoken');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { body, validationResult } = require('express-validator');
-
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.APP_API_PORT || 3000;
-
 
 // CORS configuration
 const corsOptions = {
@@ -19,7 +19,6 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(bodyParser.json());
-
 
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -32,7 +31,6 @@ const pool = new Pool({
   }
 });
 
-
 pool.connect(err => {
   if (err) {
     console.error('Error connecting to the database:', err.message);
@@ -41,23 +39,14 @@ pool.connect(err => {
   console.log('Connected to PostgreSQL Database');
 });
 
-
-// Middleware to authenticate the token
-const authenticateToken = (req, res, next) => {
-  const token = req.headers['authorization']?.split(' ')[1];
-  if (!token) return res.status(401).json({ message: 'Access Denied. No Token Provided.' });
-
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: 'Invalid Token' });
-    req.user = user;
-    next();
-  });
-};
-
-
-// Define saltRounds for bcrypt
-const saltRounds = 10;
+// Setup nodemailer transporter
+const transporter = nodemailer.createTransport({
+  service: 'gmail', // Use any email service provider
+  auth: {
+    user: process.env.EMAIL_USER, // Your email
+    pass: process.env.EMAIL_PASSWORD,  // Your email password or app-specific password
+  },
+});
 
 // Utility function to create the table if it doesn't exist
 const createTableIfNotExists = async () => {
@@ -77,10 +66,10 @@ const createTableIfNotExists = async () => {
         address TEXT,
         gender VARCHAR(20),
         allergies TEXT,
-        medicalhistory TEXT
+        medicalhistory TEXT,
+        is_verified BOOLEAN DEFAULT FALSE -- Column to track email verification
       );
     `);
-
     console.log("Table 'users' ensured to exist.");
   } catch (err) {
     console.error("Error creating table:", err);
@@ -93,9 +82,7 @@ const checkAndCreateTable = async (req, res, next) => {
   next(); // Proceed to the next middleware/route handler
 };
 
-// Use the middleware to ensure the table exists before handling any POST requests
 app.use(checkAndCreateTable);
-
 
 // Register route
 app.post("/register", async (req, res) => {
@@ -114,7 +101,7 @@ app.post("/register", async (req, res) => {
     }
 
     // Hash the password
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     // Insert the new user into the database
     const newUser = await pool.query(
@@ -122,8 +109,20 @@ app.post("/register", async (req, res) => {
       [username, email, hashedPassword, usertype]
     );
 
+    // Generate a verification code and send it via email
+    const verificationCode = crypto.randomBytes(3).toString('hex'); // Random 6-character code
+    await pool.query("UPDATE users SET verification_code = $1 WHERE email = $2", [verificationCode, email]);
+
+    // Send verification email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Verify Your Email Address',
+      text: `Your verification code is: ${verificationCode}`
+    });
+
     res.status(201).json({
-      message: "User registered successfully",
+      message: "User registered successfully. Please check your email for verification.",
       user: newUser.rows[0],
     });
   } catch (err) {
@@ -131,6 +130,69 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
+
+// Route to send verification code (in case the user needs it again)
+app.post("/send-verification-code", async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: "Email is required." });
+  }
+
+  try {
+    const verificationCode = crypto.randomBytes(3).toString('hex'); // Random 6-character code
+
+    // Store the verification code in the database for the user
+    await pool.query("UPDATE users SET verification_code = $1 WHERE email = $2", [verificationCode, email]);
+
+    // Send the verification code email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Verify Your Email Address',
+      text: `Your verification code is: ${verificationCode}`,
+    });
+
+    res.status(200).json({ message: 'Verification code sent to your email.' });
+  } catch (err) {
+    console.error("Error sending verification code:", err.message);
+    res.status(500).json({ message: "Failed to send verification email." });
+  }
+});
+
+// Route to verify the code
+app.post("/verify-code", async (req, res) => {
+  const { email, code } = req.body;
+
+  if (!email || !code) {
+    return res.status(400).json({ message: "Email and code are required." });
+  }
+
+  try {
+    // Get the stored verification code from the database
+    const result = await pool.query("SELECT verification_code FROM users WHERE email = $1", [email]);
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "No user found with this email." });
+    }
+
+    const storedCode = result.rows[0].verification_code;
+
+    // Check if the code matches
+    if (storedCode !== code) {
+      return res.status(400).json({ message: "Invalid verification code." });
+    }
+
+    // Mark the user as verified
+    await pool.query("UPDATE users SET is_verified = TRUE WHERE email = $1", [email]);
+
+    res.status(200).json({ message: "Email successfully verified." });
+  } catch (err) {
+    console.error("Error verifying code:", err.message);
+    res.status(500).json({ message: "Internal server error." });
+  }
+});
+
 // User Login Endpoint
 app.post('/api/app/login', [
   body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
@@ -139,40 +201,28 @@ app.post('/api/app/login', [
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-
   const { username, password } = req.body;
 
-
-  console.log("Received username:", username); // Debugging line
-  const query = 'SELECT * FROM users WHERE username = $1'; // Ensure column name is correct
-
+  const query = 'SELECT * FROM users WHERE username = $1';
 
   pool.query(query, [username], (err, result) => {
     if (err) {
-      console.error("Error querying database:", err.message); // Debugging line
       return res.status(500).json({ message: 'Error querying database' });
     }
 
-
     if (result.rows.length === 0) {
-      console.log("No user found with username:", username); // Debugging line
-      return res.status(400).json({ message: `User not found. Please check the username: "${username}"` });
+      return res.status(400).json({ message: `User not found.` });
     }
-
 
     const user = result.rows[0];
     bcrypt.compare(password, user.password, (err, isMatch) => {
       if (err) {
-        console.error("Error comparing passwords:", err.message); // Debugging line
         return res.status(500).json({ message: 'Error comparing passwords' });
       }
 
-
       if (!isMatch) {
-        console.log("Invalid password for user:", username); // Debugging line
-        return res.status(400).json({ message: `Incorrect password for user: "${username}"` });
+        return res.status(400).json({ message: 'Incorrect password' });
       }
-
 
       const token = jwt.sign(
         { userId: user.idusers, username: user.username, usertype: user.usertype },
@@ -180,86 +230,14 @@ app.post('/api/app/login', [
         { expiresIn: '1h' }
       );
 
-
       res.status(200).json({
         message: 'Login successful',
         token: token,
-        idusers: user.idusers,
-        usertype: user.usertype,
-        user: { id: user.idusers, username: user.username, email: user.email },
+        user: { id: user.idusers, username: user.username, email: user.email, usertype: user.usertype },
       });
     });
   });
 });
-
-
-// Example of another endpoint with dynamic data handling
-app.put('/api/app/appointments/update-status', async (req, res) => {
-  try {
-    const { currentDate } = req.body; // Assume currentDate is passed in YYYY-MM-DD format
-
-
-    // Validate currentDate
-    if (!currentDate) {
-      return res.status(400).json({ message: 'Current date is required' });
-    }
-
-
-    // SQL query to update appointments with past dates and status != 'D'
-    const query = `
-      UPDATE appointment
-      SET status = 'D'
-      WHERE date < $1 AND status != 'D'
-      RETURNING *
-    `;
-
-
-    // Execute the query
-    const result = await pool.query(query, [currentDate]);
-
-
-    // Check if any rows were updated
-    if (result.rowCount === 0) {
-      return res.status(200).json({ message: 'No appointments required updating.' });
-    }
-
-
-    // Respond with updated rows
-    res.status(200).json({
-      message: 'Appointments updated successfully',
-      updatedAppointments: result.rows,
-    });
-  } catch (error) {
-    console.error('Error updating appointment status:', error.message);
-    res.status(500).json({
-      message: 'Error updating appointment status',
-      error: error.message,
-    });
-  }
-});
-
-
-// Example of GET endpoint for fetching patients
-app.get('/api/app/patients', (req, res) => {
-  const query = 'SELECT * FROM users WHERE usertype = $1';
-
-
-  pool.query(query, ['patient'], (err, result) => {
-    if (err) {
-      console.error('Error fetching patients:', err.message); // Log the error for debugging
-      return res.status(500).json({ message: 'Error fetching patients', error: err.message });
-    }
-
-
-    if (result.rows.length === 0) { // PostgreSQL uses `rows` for results
-      return res.status(404).json({ message: 'No patients found' });
-    }
-
-
-    res.status(200).json({ patients: result.rows }); // Use `rows` to access the query results
-  });
-});
-
 
 // Start the Server
 app.listen(PORT, () => {
