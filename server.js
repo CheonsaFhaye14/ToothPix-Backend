@@ -9,8 +9,10 @@ const { body, validationResult } = require('express-validator');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 
+
 const app = express();
 const PORT = process.env.APP_API_PORT || 3000;
+
 
 // CORS configuration
 const corsOptions = {
@@ -19,6 +21,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(bodyParser.json());
+
 
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -31,6 +34,7 @@ const pool = new Pool({
   }
 });
 
+
 pool.connect(err => {
   if (err) {
     console.error('Error connecting to the database:', err.message);
@@ -38,6 +42,7 @@ pool.connect(err => {
   }
   console.log('Connected to PostgreSQL Database');
 });
+
 
 // Setup nodemailer transporter
 const transporter = nodemailer.createTransport({
@@ -47,6 +52,7 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASSWORD,  // Your email password or app-specific password
   },
 });
+
 
 // Utility function to create the table if it doesn't exist
 const createTableIfNotExists = async () => {
@@ -76,32 +82,40 @@ const createTableIfNotExists = async () => {
   }
 };
 
+
 // Middleware to create the table before processing each request
 const checkAndCreateTable = async (req, res, next) => {
   await createTableIfNotExists();
   next(); // Proceed to the next middleware/route handler
 };
 
+
 app.use(checkAndCreateTable);
+
 
 // Register route
 app.post("/register", async (req, res) => {
   const { username, email, password, usertype } = req.body;
 
+
   if (!username || !email || !password || !usertype) {
     return res.status(400).json({ message: "All fields (email, password, usertype, username) are required" });
   }
+
 
   try {
     // Check if the email already exists
     const existingUser = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
 
+
     if (existingUser.rows.length > 0) {
       return res.status(400).json({ message: "Email already registered" });
     }
 
+
     // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
+
 
     // Insert the new user into the database
     const newUser = await pool.query(
@@ -109,9 +123,11 @@ app.post("/register", async (req, res) => {
       [username, email, hashedPassword, usertype]
     );
 
+
     // Generate a verification code and send it via email
     const verificationCode = crypto.randomBytes(3).toString('hex'); // Random 6-character code
     await pool.query("UPDATE users SET verification_code = $1 WHERE email = $2", [verificationCode, email]);
+
 
     // Send verification email
     await transporter.sendMail({
@@ -120,6 +136,7 @@ app.post("/register", async (req, res) => {
       subject: 'Verify Your Email Address',
       text: `Your verification code is: ${verificationCode}`
     });
+
 
     res.status(201).json({
       message: "User registered successfully. Please check your email for verification.",
@@ -131,19 +148,24 @@ app.post("/register", async (req, res) => {
   }
 });
 
+
 // Route to send verification code (in case the user needs it again)
 app.post("/send-verification-code", async (req, res) => {
   const { email } = req.body;
+
 
   if (!email) {
     return res.status(400).json({ message: "Email is required." });
   }
 
+
   try {
     const verificationCode = crypto.randomBytes(3).toString('hex'); // Random 6-character code
 
+
     // Store the verification code in the database for the user
     await pool.query("UPDATE users SET verification_code = $1 WHERE email = $2", [verificationCode, email]);
+
 
     // Send the verification code email
     await transporter.sendMail({
@@ -153,6 +175,7 @@ app.post("/send-verification-code", async (req, res) => {
       text: `Your verification code is: ${verificationCode}`,
     });
 
+
     res.status(200).json({ message: 'Verification code sent to your email.' });
   } catch (err) {
     console.error("Error sending verification code:", err.message);
@@ -160,31 +183,39 @@ app.post("/send-verification-code", async (req, res) => {
   }
 });
 
+
 // Route to verify the code
 app.post("/verify-code", async (req, res) => {
   const { email, code } = req.body;
+
 
   if (!email || !code) {
     return res.status(400).json({ message: "Email and code are required." });
   }
 
+
   try {
     // Get the stored verification code from the database
     const result = await pool.query("SELECT verification_code FROM users WHERE email = $1", [email]);
+
 
     if (result.rows.length === 0) {
       return res.status(400).json({ message: "No user found with this email." });
     }
 
+
     const storedCode = result.rows[0].verification_code;
+
 
     // Check if the code matches
     if (storedCode !== code) {
       return res.status(400).json({ message: "Invalid verification code." });
     }
 
+
     // Mark the user as verified
     await pool.query("UPDATE users SET is_verified = TRUE WHERE email = $1", [email]);
+
 
     res.status(200).json({ message: "Email successfully verified." });
   } catch (err) {
@@ -192,6 +223,7 @@ app.post("/verify-code", async (req, res) => {
     res.status(500).json({ message: "Internal server error." });
   }
 });
+
 
 // User Login Endpoint
 app.post('/api/app/login', [
@@ -201,18 +233,23 @@ app.post('/api/app/login', [
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
+
   const { username, password } = req.body;
 
+
   const query = 'SELECT * FROM users WHERE username = $1';
+
 
   pool.query(query, [username], (err, result) => {
     if (err) {
       return res.status(500).json({ message: 'Error querying database' });
     }
 
+
     if (result.rows.length === 0) {
       return res.status(400).json({ message: `User not found.` });
     }
+
 
     const user = result.rows[0];
     bcrypt.compare(password, user.password, (err, isMatch) => {
@@ -220,15 +257,18 @@ app.post('/api/app/login', [
         return res.status(500).json({ message: 'Error comparing passwords' });
       }
 
+
       if (!isMatch) {
         return res.status(400).json({ message: 'Incorrect password' });
       }
+
 
       const token = jwt.sign(
         { userId: user.idusers, username: user.username, usertype: user.usertype },
         process.env.JWT_SECRET,
         { expiresIn: '1h' }
       );
+
 
       res.status(200).json({
         message: 'Login successful',
@@ -238,6 +278,7 @@ app.post('/api/app/login', [
     });
   });
 });
+
 
 // Start the Server
 app.listen(PORT, () => {
