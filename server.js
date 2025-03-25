@@ -70,9 +70,8 @@ await pool.query(`
      allergies TEXT,
      medicalhistory TEXT,
      is_verified BOOLEAN DEFAULT FALSE,
-     verification_code VARCHAR(10)  -- Add this column for storing email verification codes
-   );
-`);
+     verification_code VARCHAR(10) )
+     `);
 
 
 
