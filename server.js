@@ -54,33 +54,26 @@ const transporter = nodemailer.createTransport({
 });
 
 
-// Utility function to create the table if it doesn't exist
-const createTableIfNotExists = async () => {
-  try {
-    // Create the table if it doesn't exist
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        idusers SERIAL PRIMARY KEY,
-        username VARCHAR(100) NOT NULL UNIQUE,
-        email VARCHAR(100) NOT NULL UNIQUE,
-        password VARCHAR(255) NOT NULL,
-        usertype VARCHAR(50) NOT NULL,
-        firstname VARCHAR(100),
-        lastname VARCHAR(100),
-        birthdate DATE,
-        contact VARCHAR(50),
-        address TEXT,
-        gender VARCHAR(20),
-        allergies TEXT,
-        medicalhistory TEXT,
-        is_verified BOOLEAN DEFAULT FALSE -- Column to track email verification
-      );
-    `);
-    console.log("Table 'users' ensured to exist.");
-  } catch (err) {
-    console.error("Error creating table:", err);
-  }
-};
+await pool.query(`
+   CREATE TABLE IF NOT EXISTS users (
+     idusers SERIAL PRIMARY KEY,
+     username VARCHAR(100) NOT NULL UNIQUE,
+     email VARCHAR(100) NOT NULL UNIQUE,
+     password VARCHAR(255) NOT NULL,
+     usertype VARCHAR(50) NOT NULL,
+     firstname VARCHAR(100),
+     lastname VARCHAR(100),
+     birthdate DATE,
+     contact VARCHAR(50),
+     address TEXT,
+     gender VARCHAR(20),
+     allergies TEXT,
+     medicalhistory TEXT,
+     is_verified BOOLEAN DEFAULT FALSE,
+     verification_code VARCHAR(10)  -- Add this column for storing email verification codes
+   );
+`);
+
 
 
 // Middleware to create the table before processing each request
