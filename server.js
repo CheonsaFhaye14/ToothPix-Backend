@@ -53,18 +53,34 @@ app.post("/register", async (req, res) => {
   }
 
   try {
-    const existingUser = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-    if (existingUser.rows.length > 0) {
+    // Check if email already exists
+    const existingEmail = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (existingEmail.rows.length > 0) {
       return res.status(400).json({ message: "Email already registered" });
     }
 
+    // Check if username already exists (Uniqueness check)
+    const existingUsername = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
+    if (existingUsername.rows.length > 0) {
+      return res.status(400).json({ message: "Username already taken" });
+    }
+
+    // Check for similar usernames (basic implementation, customize as needed)
+    const similarUsernameCheck = await pool.query("SELECT * FROM users WHERE username ILIKE $1", [username]);
+    if (similarUsernameCheck.rows.length > 0) {
+      return res.status(400).json({ message: "Username is too similar to an existing username" });
+    }
+
+    // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Insert the new user into the database
     const newUser = await pool.query(
       "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
       [username, email, hashedPassword, usertype]
     );
 
+    // Respond with success
     res.status(201).json({
       message: "User registered successfully.",
       user: newUser.rows[0],
@@ -74,6 +90,7 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
+
 
 
 // Login route
