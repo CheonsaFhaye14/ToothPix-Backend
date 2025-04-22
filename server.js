@@ -137,6 +137,69 @@ app.post('/api/app/login', [
   }
 });
 
+// Get profile route
+app.get('/api/app/profile', async (req, res) => {
+  const { authorization } = req.headers;
+  if (!authorization) return res.status(401).json({ message: "No token provided" });
+
+  const token = authorization.split(" ")[1];
+
+  try {
+    // Verify the JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    // Get user profile from the database
+    const getQuery = 'SELECT * FROM users WHERE idusers = $1';
+    const result = await pool.query(getQuery, [userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.status(200).json({
+      profile: result.rows[0]
+    });
+  } catch (err) {
+    console.error("Error retrieving profile:", err.message);
+    res.status(500).json({ message: 'Error retrieving profile' });
+  }
+});
+
+// Update profile route
+app.post('/api/app/profile', async (req, res) => {
+  const { firstname, lastname, birthdate, contact, address, gender, allergies, medicalhistory, email, username } = req.body;
+
+  const { authorization } = req.headers;
+  if (!authorization) return res.status(401).json({ message: "No token provided" });
+
+  const token = authorization.split(" ")[1];
+
+  try {
+    // Verify the JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId;
+
+    // Update the user profile in the database
+    const updateQuery = `
+      UPDATE users 
+      SET firstname = $1, lastname = $2, birthdate = $3, contact = $4, address = $5, gender = $6, allergies = $7, medicalhistory = $8, email = $9, username = $10
+      WHERE idusers = $11
+      RETURNING *`;
+      
+    const updatedUser = await pool.query(updateQuery, [firstname, lastname, birthdate, contact, address, gender, allergies, medicalhistory, email, username, userId]);
+
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      profile: updatedUser.rows[0]
+    });
+  } catch (err) {
+    console.error("Error updating profile:", err.message);
+    res.status(500).json({ message: 'Error updating profile' });
+  }
+});
+
+
 // Start server
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
