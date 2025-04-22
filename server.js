@@ -39,58 +39,6 @@ pool.connect(err => {
   console.log('Connected to PostgreSQL Database');
 });
 
-// Setup nodemailer transporter
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD,
-  },
-});
-
-const createTableIfNotExists = async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        idusers SERIAL PRIMARY KEY,
-        username VARCHAR(100) NOT NULL UNIQUE,
-        email VARCHAR(100) NOT NULL UNIQUE,
-        password VARCHAR(255) NOT NULL,
-        usertype VARCHAR(50) NOT NULL,
-        firstname VARCHAR(100),
-        lastname VARCHAR(100),
-        birthdate DATE,
-        contact VARCHAR(50),
-        address TEXT,
-        gender VARCHAR(20),
-        allergies TEXT,
-        medicalhistory TEXT,
-        is_verified BOOLEAN DEFAULT FALSE
-      );
-    `);
-
-    const columnExists = await pool.query(`
-      SELECT column_name FROM information_schema.columns 
-      WHERE table_name = 'users' AND column_name = 'verification_code';
-    `);
-
-    if (columnExists.rows.length === 0) {
-      await pool.query(`ALTER TABLE users ADD COLUMN verification_code VARCHAR(10);`);
-      console.log("Column 'verification_code' added.");
-    }
-
-    console.log("Table 'users' ensured to exist.");
-  } catch (err) {
-    console.error("Error creating/updating table:", err);
-  }
-};
-
-const checkAndCreateTable = async (req, res, next) => {
-  await createTableIfNotExists();
-  next();
-};
-
-app.use(checkAndCreateTable);
 
 // Register route
 app.post("/register", async (req, res) => {
