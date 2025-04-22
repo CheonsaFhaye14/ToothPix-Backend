@@ -38,12 +38,18 @@ pool.connect(err => {
   console.log('Connected to PostgreSQL Database');
 });
 
-// Register route (no email verification)
 app.post("/register", async (req, res) => {
   const { username, email, password, usertype } = req.body;
 
+  // Simple regex for email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
   if (!username || !email || !password || !usertype) {
     return res.status(400).json({ message: "All fields are required" });
+  }
+
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: "Invalid email format" });
   }
 
   try {
@@ -68,6 +74,7 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
+
 
 // Login route
 app.post('/api/app/login', [
