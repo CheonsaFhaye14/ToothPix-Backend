@@ -200,20 +200,33 @@ app.post('/api/app/services', async (req, res) => {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
+  // Log input values for debugging
+  console.log('Received data:', { name, description, price });
+
   const query = 'INSERT INTO service (name, description, price) VALUES ($1, $2, $3) RETURNING idservice, name, description, price';
 
   try {
     const result = await pool.query(query, [name.trim(), description, parseFloat(price)]);
     const service = result.rows[0];
+
+    // Log successful insertion
+    console.log('Service added:', service);
+
     res.status(201).json({
       message: 'Service added successfully',
       service,
     });
   } catch (err) {
+    // Log error details for debugging
     console.error('Error adding service:', err.message);
-    res.status(500).json({ message: 'Error adding service', error: err.message });
+
+    res.status(500).json({ 
+      message: 'Error adding service', 
+      error: err.message 
+    });
   }
 });
+
 
 // Delete Service
 app.delete('/api/app/services/:id', async (req, res) => {
