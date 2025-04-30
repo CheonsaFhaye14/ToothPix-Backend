@@ -57,7 +57,6 @@ const authenticateToken = (req, res, next) => {
 app.post("/register", async (req, res) => {
   const { username, email, password, usertype } = req.body;
 
-  // Simple regex for email format validation
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   if (!username || !email || !password || !usertype) {
@@ -69,34 +68,28 @@ app.post("/register", async (req, res) => {
   }
 
   try {
-    // Check if email already exists
     const existingEmail = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
     if (existingEmail.rows.length > 0) {
       return res.status(400).json({ message: "Email already registered" });
     }
 
-    // Check if username already exists (Uniqueness check)
     const existingUsername = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
     if (existingUsername.rows.length > 0) {
       return res.status(400).json({ message: "Username already taken" });
     }
 
-    // Check for similar usernames (basic implementation, customize as needed)
     const similarUsernameCheck = await pool.query("SELECT * FROM users WHERE username ILIKE $1", [username]);
     if (similarUsernameCheck.rows.length > 0) {
       return res.status(400).json({ message: "Username is too similar to an existing username" });
     }
 
-    // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert the new user into the database
     const newUser = await pool.query(
       "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
       [username, email, hashedPassword, usertype]
     );
 
-    // Respond with success
     res.status(201).json({
       message: "User registered successfully.",
       user: newUser.rows[0],
@@ -175,7 +168,6 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
   const { firstname, lastname, birthdate, contact, address, gender, allergies, medicalhistory, email, username } = req.body;
 
   try {
-    // Update the user profile in the database
     const updateQuery = `UPDATE users 
                          SET firstname = $1, lastname = $2, birthdate = $3, contact = $4, address = $5, gender = $6, allergies = $7, medicalhistory = $8, email = $9, username = $10
                          WHERE idusers = $11
@@ -190,6 +182,54 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error("Error updating profile:", err.message);
     res.status(500).json({ message: 'Error updating profile' });
+  }
+});
+
+
+// ✅ ADD SERVICE ROUTES HERE
+
+// Add Service
+app.post('/api/app/services', [
+  body('name').isLength({ min: 3 }).withMessage('Service name must be at least 3 characters long'),
+  body('price').isDecimal().withMessage('Price must be a valid number'),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+
+  const { name, description, price } = req.body;
+  const query = 'INSERT INTO service (name, description, price) VALUES ($1, $2, $3) RETURNING idservice, name, description, price';
+
+  try {
+    const result = await pool.query(query, [name, description, price]);
+    const service = result.rows[0];
+    res.status(201).json({
+      message: 'Service added successfully',
+      service,
+    });
+  } catch (err) {
+    console.error('Error adding service:', err.message);
+    res.status(500).json({ message: 'Error adding service', error: err.message });
+  }
+});
+
+// Delete Service
+app.delete('/api/app/services/:id', async (req, res) => {
+  const serviceId = req.params.id;
+  const query = 'DELETE FROM service WHERE idservice = $1';
+
+  try {
+    const result = await pool.query(query, [serviceId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Service not found' });
+    }
+
+    res.status(200).json({ message: 'Service deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting service:', err.message);
+    res.status(500).json({ message: 'Error deleting service', error: err.message });
   }
 });
 
