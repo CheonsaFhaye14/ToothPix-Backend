@@ -246,6 +246,47 @@ app.get('/api/app/services', async (req, res) => {
   }
 });
 
+// Update service route
+app.put('/api/app/services/:id', async (req, res) => {
+  const { id } = req.params;  // Service ID from URL parameter
+  const { name, description, price } = req.body;  // Data from the request body
+
+  // Validate input
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
+  }
+
+  if (price === undefined || isNaN(price)) {
+    return res.status(400).json({ message: 'Price is required and must be a valid number.' });
+  }
+
+  // Query to update the service in the database
+  const query = `
+    UPDATE service 
+    SET name = $1, description = $2, price = $3
+    WHERE idservice = $4
+    RETURNING idservice, name, description, price
+  `;
+
+  try {
+    const result = await pool.query(query, [name.trim(), description, parseFloat(price), id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Service not found' });
+    }
+
+    const updatedService = result.rows[0];
+
+    // Respond with the updated service data
+    res.status(200).json({
+      message: 'Service updated successfully',
+      service: updatedService,
+    });
+  } catch (err) {
+    console.error('Error updating service:', err.message);
+    res.status(500).json({ message: 'Error updating service', error: err.message });
+  }
+});
 
 // Delete Service
 app.delete('/api/app/services/:id', async (req, res) => {
