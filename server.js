@@ -188,21 +188,22 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 
 // ✅ ADD SERVICE ROUTES HERE
 
-// Add Service
-app.post('/api/app/services', [
-  body('name').isLength({ min: 3 }).withMessage('Service name must be at least 3 characters long'),
-  body('price').isDecimal().withMessage('Price must be a valid number'),
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
+app.post('/api/app/services', async (req, res) => {
+  const { name, description, price } = req.body;
+
+  // Basic manual checking
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
+  }
+  
+  if (price === undefined || isNaN(price)) {
+    return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
-  const { name, description, price } = req.body;
   const query = 'INSERT INTO service (name, description, price) VALUES ($1, $2, $3) RETURNING idservice, name, description, price';
 
   try {
-    const result = await pool.query(query, [name, description, price]);
+    const result = await pool.query(query, [name.trim(), description, parseFloat(price)]);
     const service = result.rows[0];
     res.status(201).json({
       message: 'Service added successfully',
