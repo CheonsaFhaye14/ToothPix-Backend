@@ -226,6 +226,25 @@ app.post('/api/app/services', async (req, res) => {
     });
   }
 });
+// Get all services route
+app.get('/api/app/services', async (req, res) => {
+  const query = 'SELECT * FROM service';
+
+  try {
+    const result = await pool.query(query);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No services found' });
+    }
+
+    res.status(200).json({
+      services: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching services:', err.message);
+    res.status(500).json({ message: 'Error fetching services', error: err.message });
+  }
+});
 
 
 // Delete Service
