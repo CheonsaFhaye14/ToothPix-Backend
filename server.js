@@ -99,6 +99,64 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
+// ✅ Create a new appointment
+app.post('/api/app/appointments', async (req, res) => {
+  const { idpatient, iddentist, date, status, notes, idservice } = req.body;
+
+  // Validate required fields
+  if (!idpatient || !iddentist || !date || !idservice) {
+    return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice are required.' });
+  }
+
+  const query = `
+    INSERT INTO appointment (idpatient, iddentist, date, status, notes, idservice)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING idappointment, idpatient, iddentist, date, status, notes, idservice
+  `;
+
+  try {
+    const result = await pool.query(query, [idpatient, iddentist, date, status || 'pending', notes || '', idservice]);
+    const appointment = result.rows[0];
+
+    res.status(201).json({
+      message: 'Appointment created successfully',
+      appointment,
+    });
+  } catch (err) {
+    console.error('Error creating appointment:', err.message);
+    res.status(500).json({ message: 'Error creating appointment', error: err.message });
+  }
+});
+
+// ✅ Get all appointments
+app.get('/api/app/appointments', async (req, res) => {
+  const query = `
+    SELECT 
+      a.idappointment, a.idpatient, a.iddentist, a.date, a.status, a.notes, a.idservice,
+      u1.username AS patient_name,
+      u2.username AS dentist_name,
+      s.name AS service_name
+    FROM appointment a
+    LEFT JOIN users u1 ON a.idpatient = u1.idusers
+    LEFT JOIN users u2 ON a.iddentist = u2.idusers
+    LEFT JOIN service s ON a.idservice = s.idservice
+    ORDER BY a.date DESC
+  `;
+
+  try {
+    const result = await pool.query(query);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
+    }
+
+    res.status(200).json({
+      appointments: result.rows,
+    });
+  } catch (err) {
+    console.error('Error fetching appointments:', err.message);
+    res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+  }
+});
 
 // Login route
 app.post('/api/app/login', [
