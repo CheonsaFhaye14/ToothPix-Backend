@@ -147,35 +147,26 @@ app.post('/api/app/appointments', async (req, res) => {
   }
 });
 
-// ✅ Get all appointments
+// Get all appointments route
 app.get('/api/app/appointments', async (req, res) => {
-  const query = `
-    SELECT 
-      a.idappointment, a.idpatient, a.iddentist, a.date, a.status, a.notes, a.idservice,
-      u1.username AS patient_name,
-      u2.username AS dentist_name,
-      s.name AS service_name
-    FROM appointment a
-    LEFT JOIN users u1 ON a.idpatient = u1.idusers
-    LEFT JOIN users u2 ON a.iddentist = u2.idusers
-    LEFT JOIN service s ON a.idservice = s.idservice
-    ORDER BY a.date DESC
-  `;
+  const query = 'SELECT * FROM appointments';
 
   try {
     const result = await pool.query(query);
+    
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No appointments found' });
     }
 
     res.status(200).json({
-      appointments: result.rows,
+      appointments: result.rows
     });
   } catch (err) {
     console.error('Error fetching appointments:', err.message);
     res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   }
 });
+
 
 // Login route
 app.post('/api/app/login', [
