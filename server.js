@@ -149,7 +149,7 @@ app.post('/api/app/appointments', async (req, res) => {
 
 // Get all appointments route
 app.get('/api/app/appointments', async (req, res) => {
-  const query = 'SELECT * FROM appointments';
+  const query = 'SELECT * FROM appointment';
 
   try {
     const result = await pool.query(query);
