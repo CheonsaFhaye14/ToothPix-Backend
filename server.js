@@ -52,6 +52,25 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ message: 'Token invalid or expired' });
   }
 };
+// ✅ Get all dentists (users with usertype = 'dentist')
+app.get('/api/app/dentists', async (req, res) => {
+  const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'dentist'";
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No dentists found' });
+    }
+
+    res.status(200).json({
+      dentists: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching dentists:', err.message);
+    res.status(500).json({ message: 'Error fetching dentists', error: err.message });
+  }
+});
 
 // Register route
 app.post("/register", async (req, res) => {
