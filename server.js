@@ -72,6 +72,41 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
+// ✅ Update appointment status
+app.put('/api/app/appointments/:id/status', async (req, res) => {
+  const id = req.params.id;
+  const { status } = req.body;
+
+  // Validate status
+  if (!status || !['approved', 'cancelled', 'rescheduled'].includes(status)) {
+    return res.status(400).json({ message: 'Invalid or missing status. Allowed values: approved, cancelled, rescheduled.' });
+  }
+
+  const query = `
+    UPDATE appointment
+    SET status = $1
+    WHERE idappointment = $2
+    RETURNING idappointment, status
+  `;
+
+  try {
+    const result = await pool.query(query, [status, id]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Appointment not found.' });
+    }
+
+    res.json({
+      message: `Appointment status updated to ${status}`,
+      appointment: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Error updating appointment status:', err.message);
+    res.status(500).json({ message: 'Error updating appointment status', error: err.message });
+  }
+});
+
+
 // Register route
 app.post("/register", async (req, res) => {
   const { username, email, password, usertype } = req.body;
