@@ -72,10 +72,11 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
-// ✅ Update appointment status, note, and date via /appointments/:id
+// ✅ Update appointment status, notes, and date via /appointments/:id
 app.put('/api/app/appointments/:id', async (req, res) => {
   const id = req.params.id;
-  const { status, note, date } = req.body;
+  const { status, notes, date } = req.body;
+
 
   // Supported statuses
   const allowedStatuses = ['approved', 'cancelled', 'rescheduled', 'declined'];
@@ -85,17 +86,17 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     return res.status(400).json({ message: 'Invalid or missing status' });
   }
 
-  // Auto-generate note if not provided
+  // Auto-generate notes if not provided
   const now = new Date().toLocaleString();
-  let finalNote = note;
+  let finalNotes = notes;
 
-  if (!note) {
+  if (!notes) {
     if (status === 'approved') {
-      finalNote = `Approved by dentist on ${now}`;
+      finalNotes = `Approved by dentist on ${now}`;
     } else if (status === 'declined' || status === 'cancelled') {
-      finalNote = `Declined by dentist on ${now}. Please reschedule.`;
+      finalNotes = `Declined by dentist on ${now}. Please reschedule.`;
     } else if (status === 'rescheduled' && date) {
-      finalNote = `Rescheduled by dentist to ${date}`;
+      finalNotes = `Rescheduled by dentist to ${date}`;
     }
   }
 
@@ -110,9 +111,9 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     queryParams.push(status);
   }
 
-  if (finalNote !== undefined) {
-    setValues.push(`note = $${setValues.length + 1}`);
-    queryParams.push(finalNote);
+  if (finalNotes !== undefined) {
+    setValues.push(`notes = $${setValues.length + 1}`);
+    queryParams.push(finalNotes);
   }
 
   if (date && !isNaN(Date.parse(date))) {
