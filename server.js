@@ -77,13 +77,6 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   const id = req.params.id;
   const { status } = req.body;
 
-  // ✅ Validate status
-  if (!status || !['approved', 'cancelled', 'rescheduled'].includes(status)) {
-    return res.status(400).json({
-      message: 'Invalid or missing status. Allowed values: approved, cancelled, rescheduled.',
-    });
-  }
-
   const query = `
     UPDATE appointment
     SET status = $1
