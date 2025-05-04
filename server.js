@@ -96,7 +96,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     if (status === 'approved') {
       finalNotes = `Approved by dentist on ${formattedDate}`;
     } else if (status === 'declined' || status === 'cancelled') {
-      finalNotes = `Declined by dentist on ${formattedDate}. Please reschedule.`;
+      finalNotes = `Cancelled by dentist on ${formattedDate}. Please reschedule.`;
     } else if (status === 'rescheduled' && date) {
       finalNotes = `Rescheduled by dentist to ${date}`;
     }
