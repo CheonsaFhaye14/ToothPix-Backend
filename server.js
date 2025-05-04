@@ -72,11 +72,9 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
-// ✅ Update appointment status, notes, and date via /appointments/:id
 app.put('/api/app/appointments/:id', async (req, res) => {
   const id = req.params.id;
   const { status, notes, date } = req.body;
-
 
   // Supported statuses
   const allowedStatuses = ['approved', 'cancelled', 'rescheduled', 'declined'];
@@ -87,14 +85,18 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   }
 
   // Auto-generate notes if not provided
-  const now = new Date().toLocaleString();
+  const now = new Date();
+  
+  // Format the date as "YYYY-MM-DD HH:mm"
+  const formattedDate = now.toISOString().slice(0, 16).replace("T", " "); // e.g., "2025-05-04 21:42"
+
   let finalNotes = notes;
 
   if (!notes) {
     if (status === 'approved') {
-      finalNotes = `Approved by dentist on ${now}`;
+      finalNotes = `Approved by dentist on ${formattedDate}`;
     } else if (status === 'declined' || status === 'cancelled') {
-      finalNotes = `Declined by dentist on ${now}. Please reschedule.`;
+      finalNotes = `Declined by dentist on ${formattedDate}. Please reschedule.`;
     } else if (status === 'rescheduled' && date) {
       finalNotes = `Rescheduled by dentist to ${date}`;
     }
@@ -149,8 +151,6 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     });
   }
 });
-
-
 
 
 // Register route
