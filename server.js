@@ -304,6 +304,26 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
+// ✅ Get all patients (users with usertype = 'patient')
+app.get('/api/app/patients', async (req, res) => {
+  const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'patient'";
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No patients found' });
+    }
+
+    res.status(200).json({
+      patients: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching patients:', err.message);
+    res.status(500).json({ message: 'Error fetching patients', error: err.message });
+  }
+});
+
 // ✅ Create a new appointment
 app.post('/api/app/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice } = req.body;
