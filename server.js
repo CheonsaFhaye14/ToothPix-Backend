@@ -72,33 +72,59 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
-// ✅ Update appointment status via /appointments/:id (to match Flutter code)
+// ✅ Update appointment status, note, and date via /appointments/:id
 app.put('/api/app/appointments/:id', async (req, res) => {
   const id = req.params.id;
-  const { status } = req.body;
+  const { status, note, date } = req.body; // Receive status, note, and date from the request body
 
-  const query = `
-    UPDATE appointment
-    SET status = $1
-    WHERE idappointment = $2
-    RETURNING idappointment, status
-  `;
+  // Initialize an array for the set values (dynamically)
+  const setValues = [];
+  const queryParams = [];
+
+  let query = 'UPDATE appointment SET ';
+
+  // Check if status is provided and valid
+  if (status && ['approved', 'cancelled', 'rescheduled'].includes(status)) {
+    setValues.push('status = $' + (setValues.length + 1)); // Add status to setValues
+    queryParams.push(status);
+  }
+
+  // Check if note is provided
+  if (note !== undefined) {
+    setValues.push('note = $' + (setValues.length + 1)); // Add note to setValues
+    queryParams.push(note);
+  }
+
+  // Check if date is provided and valid
+  if (date && !isNaN(Date.parse(date))) {
+    setValues.push('date = $' + (setValues.length + 1)); // Add date to setValues
+    queryParams.push(date);
+  }
+
+  // If no fields were provided to update, return an error
+  if (setValues.length === 0) {
+    return res.status(400).json({ message: 'No valid fields to update' });
+  }
+
+  // Build the final query with placeholders for the values
+  query += setValues.join(', ') + ' WHERE idappointment = $' + (setValues.length + 1);
+  queryParams.push(id);
 
   try {
-    const result = await pool.query(query, [status, id]);
+    const result = await pool.query(query, queryParams);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Appointment not found.' });
     }
 
     res.json({
-      message: `Appointment status updated to ${status}`,
+      message: `Appointment updated successfully`,
       appointment: result.rows[0],
     });
   } catch (err) {
-    console.error('Error updating appointment status:', err.message);
+    console.error('Error updating appointment:', err.message);
     res.status(500).json({
-      message: 'Error updating appointment status',
+      message: 'Error updating appointment',
       error: err.message,
     });
   }
