@@ -72,14 +72,16 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
-// ✅ Update appointment status
-app.put('/api/app/appointments/:id/status', async (req, res) => {
+// ✅ Update appointment status via /appointments/:id (to match Flutter code)
+app.put('/api/app/appointments/:id', async (req, res) => {
   const id = req.params.id;
   const { status } = req.body;
 
-  // Validate status
+  // ✅ Validate status
   if (!status || !['approved', 'cancelled', 'rescheduled'].includes(status)) {
-    return res.status(400).json({ message: 'Invalid or missing status. Allowed values: approved, cancelled, rescheduled.' });
+    return res.status(400).json({
+      message: 'Invalid or missing status. Allowed values: approved, cancelled, rescheduled.',
+    });
   }
 
   const query = `
@@ -102,9 +104,13 @@ app.put('/api/app/appointments/:id/status', async (req, res) => {
     });
   } catch (err) {
     console.error('Error updating appointment status:', err.message);
-    res.status(500).json({ message: 'Error updating appointment status', error: err.message });
+    res.status(500).json({
+      message: 'Error updating appointment status',
+      error: err.message,
+    });
   }
 });
+
 
 
 // Register route
