@@ -72,6 +72,111 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
+// Create a new record
+app.post('/api/app/records', async (req, res) => {
+  const { idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus } = req.body;
+
+  // Validate required fields
+  if (!idpatient || !iddentist || !idappointment) {
+    return res.status(400).json({ message: 'idpatient, iddentist, and idappointment are required.' });
+  }
+
+  const query = `
+    INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus
+  `;
+
+  try {
+    const result = await pool.query(query, [idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus]);
+    const record = result.rows[0];
+
+    res.status(201).json({
+      message: 'Record created successfully',
+      record,
+    });
+  } catch (err) {
+    console.error('Error creating record:', err.message);
+    res.status(500).json({ message: 'Error creating record', error: err.message });
+  }
+});
+
+// Get all records
+app.get('/api/app/records', async (req, res) => {
+  const query = 'SELECT * FROM records';
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No records found' });
+    }
+
+    res.status(200).json({
+      records: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching records:', err.message);
+    res.status(500).json({ message: 'Error fetching records', error: err.message });
+  }
+});
+
+// Update a record
+app.put('/api/app/records/:id', async (req, res) => {
+  const id = req.params.id;
+  const { treatment_notes, ar_link, paymentstatus } = req.body;
+
+  // Validate input
+  const allowedStatuses = ['paid', 'unpaid', 'partial'];
+  if (paymentstatus && !allowedStatuses.includes(paymentstatus)) {
+    return res.status(400).json({ message: 'Invalid payment status' });
+  }
+
+  const query = `
+    UPDATE records 
+    SET treatment_notes = $1, ar_link = $2, paymentstatus = $3
+    WHERE idrecord = $4
+    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus
+  `;
+
+  try {
+    const result = await pool.query(query, [treatment_notes, ar_link, paymentstatus, id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Record not found' });
+    }
+
+    const updatedRecord = result.rows[0];
+
+    res.status(200).json({
+      message: 'Record updated successfully',
+      record: updatedRecord,
+    });
+  } catch (err) {
+    console.error('Error updating record:', err.message);
+    res.status(500).json({ message: 'Error updating record', error: err.message });
+  }
+});
+
+// Delete a record
+app.delete('/api/app/records/:id', async (req, res) => {
+  const recordId = req.params.id;
+  const query = 'DELETE FROM records WHERE idrecord = $1';
+
+  try {
+    const result = await pool.query(query, [recordId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Record not found' });
+    }
+
+    res.status(200).json({ message: 'Record deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting record:', err.message);
+    res.status(500).json({ message: 'Error deleting record', error: err.message });
+  }
+});
+
 app.put('/api/app/appointments/:id', async (req, res) => {
   const id = req.params.id;
   const { status, notes, date } = req.body;
