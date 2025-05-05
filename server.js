@@ -74,7 +74,7 @@ app.get('/api/app/dentists', async (req, res) => {
 
 // Create a new record
 app.post('/api/app/records', async (req, res) => {
-  const { idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus } = req.body;
+  const { idpatient, iddentist, idappointment, treatment_notes, paymentstatus } = req.body;
 
   // Validate required fields
   if (!idpatient || !iddentist || !idappointment) {
@@ -82,13 +82,13 @@ app.post('/api/app/records', async (req, res) => {
   }
 
   const query = `
-    INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus
+    INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, paymentstatus)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, paymentstatus
   `;
 
   try {
-    const result = await pool.query(query, [idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus]);
+    const result = await pool.query(query, [idpatient, iddentist, idappointment, treatment_notes, paymentstatus]);
     const record = result.rows[0];
 
     res.status(201).json({
@@ -124,7 +124,7 @@ app.get('/api/app/records', async (req, res) => {
 // Update a record
 app.put('/api/app/records/:id', async (req, res) => {
   const id = req.params.id;
-  const { treatment_notes, ar_link, paymentstatus } = req.body;
+  const { treatment_notes, paymentstatus } = req.body;
 
   // Validate input
   const allowedStatuses = ['paid', 'unpaid', 'partial'];
@@ -134,13 +134,13 @@ app.put('/api/app/records/:id', async (req, res) => {
 
   const query = `
     UPDATE records 
-    SET treatment_notes = $1, ar_link = $2, paymentstatus = $3
-    WHERE idrecord = $4
-    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, ar_link, paymentstatus
+    SET treatment_notes = $1, paymentstatus = $2
+    WHERE idrecord = $3
+    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, paymentstatus
   `;
 
   try {
-    const result = await pool.query(query, [treatment_notes, ar_link, paymentstatus, id]);
+    const result = await pool.query(query, [treatment_notes, paymentstatus, id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Record not found' });
