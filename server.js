@@ -72,6 +72,52 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
+app.post('/api/app/admin', [
+  body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
+  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  const { username, password } = req.body;
+
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: 'User not found.' });
+    }
+
+    const user = result.rows[0];
+    if (user.usertype !== 'admin') {
+      return res.status(403).json({ message: 'Access denied. Admins only.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Incorrect password' });
+    }
+
+    const token = jwt.sign(
+      { username: user.username, usertype: user.usertype },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    res.status(200).json({
+      message: 'Admin login successful',
+      token: token,
+      user: {
+        username: user.username,
+        email: user.email,
+        usertype: user.usertype,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Error querying database' });
+  }
+});
+
 // Create a new record
 app.post('/api/app/records', async (req, res) => {
   const { idpatient, iddentist, idappointment, treatment_notes, paymentstatus } = req.body;
