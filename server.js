@@ -108,7 +108,6 @@ app.post('/api/app/admin', [
       token: token,
       user: {
         username: user.username,
-        email: user.email,
         usertype: user.usertype,
       },
     });
