@@ -52,6 +52,40 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ message: 'Token invalid or expired' });
   }
 };
+
+app.get('/api/app/appointments/search', async (req, res) => { 
+  const { dentist, patient, startDate, endDate } = req.query;
+
+  let conditions = [];
+  let values = [];
+
+  if (dentist) {
+    conditions.push(`iddentist = $${values.length + 1}`);
+    values.push(dentist);
+  }
+
+  if (patient) {
+    conditions.push(`idpatient = $${values.length + 1}`);
+    values.push(patient);
+  }
+
+  if (startDate && endDate) {
+    conditions.push(`DATE(date) BETWEEN $${values.length + 1} AND $${values.length + 2}`);
+    values.push(startDate, endDate);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const query = `SELECT * FROM appointment ${whereClause} ORDER BY date ASC`;
+
+  try {
+    const result = await pool.query(query, values);
+    res.status(200).json({ appointments: result.rows });
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+  }
+});
+
+
 // ✅ Get all dentists (users with usertype = 'dentist')
 app.get('/api/app/dentists', async (req, res) => {
   const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'dentist'";
