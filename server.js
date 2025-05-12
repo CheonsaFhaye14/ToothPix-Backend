@@ -134,7 +134,7 @@ app.post('/api/app/admin/request-reset-password', async (req, res) => {
   pass: process.env.EMAIL_PASS,
 },
 
-      },
+      
     });
 
  const resetLink = `https://www.toothpix.com/reset-password?token=${token}`;
