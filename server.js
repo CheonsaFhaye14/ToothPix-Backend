@@ -106,16 +106,27 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
-// New route to handle password reset for admin
-app.post('/api/app/admin/reset-password', async (req, res) => {
+const rateLimit = require('express-rate-limit');  // Optional: for rate-limiting
+
+// Rate-limiting middleware (optional)
+const passwordResetLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 5, // Allow 5 requests per window
+  message: 'Too many password reset attempts, please try again later.',
+});
+
+app.post('/api/app/admin/reset-password', passwordResetLimiter, async (req, res) => {
   const { email, newPassword } = req.body;
 
   if (!email || !newPassword) {
     return res.status(400).json({ message: 'Email and new password are required' });
   }
 
+  // Hash the new password before storing it
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
   const query = 'UPDATE users SET password = $1 WHERE email = $2 AND usertype = \'admin\' RETURNING idUsers, email';
-  const values = [newPassword, email];
+  const values = [hashedPassword, email];
 
   try {
     const result = await pool.query(query, values);
@@ -130,6 +141,7 @@ app.post('/api/app/admin/reset-password', async (req, res) => {
     res.status(500).json({ message: 'Error resetting password', error: err.message });
   }
 });
+
 
 
 app.get('/api/app/admin', async (req, res) => {
