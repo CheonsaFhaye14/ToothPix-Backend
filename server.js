@@ -274,6 +274,26 @@ app.get('/api/app/records', async (req, res) => {
   }
 });
 
+// Get all users
+app.get('/api/app/users', async (req, res) => {
+  const query = 'SELECT * FROM users';
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No users found' });
+    }
+
+    res.status(200).json({
+      records: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching users:', err.message);
+    res.status(500).json({ message: 'Error fetching users', error: err.message });
+  }
+});
+
 // Update a record
 app.put('/api/app/records/:id', async (req, res) => {
   const id = req.params.id;
