@@ -106,39 +106,46 @@ app.get('/api/app/dentists', async (req, res) => {
   }
 });
 
-const rateLimit = require('express-rate-limit');  // Optional: for rate-limiting
 
-// Rate-limiting middleware (optional)
-const passwordResetLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 10 minutes
-  max: 5, // Allow 5 requests per window
-  message: 'Too many password reset attempts, please try again later.',
-});
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 
-app.post('/api/app/admin/reset-password', passwordResetLimiter, async (req, res) => {
-  const { email, newPassword } = req.body;
-
-  if (!email || !newPassword) {
-    return res.status(400).json({ message: 'Email and new password are required' });
-  }
-
-  // Hash the new password before storing it
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-  const query = 'UPDATE users SET password = $1 WHERE email = $2 AND usertype = \'admin\' RETURNING idUsers, email';
-  const values = [hashedPassword, email];
+// API to request password reset (Generate token and send email)
+app.post('/api/app/admin/request-reset-password', async (req, res) => {
+  const { email } = req.body;
+  const token = crypto.randomBytes(20).toString('hex');
+  const expiration = Date.now() + 3600000; // Token expires in 1 hour
+  
+  // Store the token and expiration time in the database
+  const query = 'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE email = $3';
+  const values = [token, expiration, email];
 
   try {
     const result = await pool.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Admin not found or email does not match' });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Admin email not found' });
     }
 
-    res.status(200).json({ message: 'Password updated successfully' });
+    // Step 3: Send the reset link email
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: 'angelfhayerafanan@gmail.com',
+        pass: 'kittycat108',
+      },
+    });
+
+ const resetLink = `https://www.toothpix.com/reset-password?token=${token}`;
+    await transporter.sendMail({
+      to: email,
+      subject: 'Password Reset Request',
+      text: `Click the following link to reset your password: ${resetLink}`,
+    });
+
+    res.status(200).json({ message: 'Password reset link sent.' });
   } catch (err) {
-    console.error('Error resetting password:', err.message);
-    res.status(500).json({ message: 'Error resetting password', error: err.message });
+    console.error('Error:', err);
+    res.status(500).json({ message: 'Error sending reset link', error: err.message });
   }
 });
 
