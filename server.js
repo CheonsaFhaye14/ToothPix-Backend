@@ -129,7 +129,6 @@ app.post('/api/app/admin/request-reset-password', async (req, res) => {
     // Step 3: Send the reset link email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: {
      auth: {
   user: process.env.EMAIL_USER,
   pass: process.env.EMAIL_PASS,
