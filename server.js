@@ -180,27 +180,6 @@ const resetLink = `http://localhost:3000/ToothPix-website/resetpassword#token=${
   }
 });
 
-
-
-app.get('/api/app/admin', async (req, res) => {
-  const query = "SELECT idUsers, email, usertype, username FROM users WHERE usertype = 'admin'";
-
-  try {
-    const result = await pool.query(query);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No admin found' });
-    }
-
-    res.status(200).json({
-      admin: result.rows
-    });
-  } catch (err) {
-    console.error('Error fetching dentists:', err.message);
-    res.status(500).json({ message: 'Error fetching admin', error: err.message });
-  }
-});
-
 app.post('/api/app/admin', [
   body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
