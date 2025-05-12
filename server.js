@@ -85,7 +85,36 @@ app.get('/api/app/appointments/search', async (req, res) => {
   }
 });
 
+app.post('/api/app/admin/reset-password/:token', async (req, res) => {
+  const { token } = req.params; // Get token from URL parameter
+  const { newPassword } = req.body; // Get new password from request body
+  
+  try {
+    // Step 1: Validate token from the database
+    const result = await pool.query(
+      'SELECT * FROM users WHERE reset_token = $1 AND reset_token_expiry > $2', 
+      [token, Date.now()]
+    );
+    
+    if (result.rowCount === 0) {
+      return res.status(400).json({ message: 'Invalid or expired token.' });
+    }
 
+    // Step 2: Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10); // Hash password with salt rounds
+
+    // Step 3: Update the password in the database and clear the reset token
+    await pool.query(
+      'UPDATE users SET password = $1, reset_token = NULL, reset_token_expiry = NULL WHERE reset_token = $2',
+      [hashedPassword, token]
+    );
+
+    res.status(200).json({ message: 'Password successfully updated.' });
+  } catch (err) {
+    console.error('Error:', err);
+    res.status(500).json({ message: 'Error resetting password', error: err.message });
+  }
+});
 // ✅ Get all dentists (users with usertype = 'dentist')
 app.get('/api/app/dentists', async (req, res) => {
   const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'dentist'";
