@@ -53,6 +53,27 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+
+app.get('/api/app/admin', async (req, res) => {
+  const query = "SELECT idUsers, email, username FROM users WHERE usertype = 'admin'";
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No admin found' });
+    }
+
+    res.status(200).json({
+      admin: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching admin:', err.message);
+    res.status(500).json({ message: 'Error fetching admin', error: err.message });
+  }
+});
+
+
 app.get('/api/app/appointments/search', async (req, res) => { 
   const { dentist, patient, startDate, endDate } = req.query;
 
