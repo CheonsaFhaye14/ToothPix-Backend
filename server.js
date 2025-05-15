@@ -73,13 +73,6 @@ app.get('/api/app/admin', async (req, res) => {
   }
 });
 
-// Import necessary modules
-const express = require('express');
-const app = express();
-const pool = require('./db'); // your PostgreSQL pool setup
-
-app.use(express.json()); // to parse JSON request bodies
-
 // POST api to add user
 app.post('/api/app/users', async (req, res) => {
   const {
