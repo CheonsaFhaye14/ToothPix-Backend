@@ -73,6 +73,81 @@ app.get('/api/app/admin', async (req, res) => {
   }
 });
 
+// Import necessary modules
+const express = require('express');
+const app = express();
+const pool = require('./db'); // your PostgreSQL pool setup
+
+app.use(express.json()); // to parse JSON request bodies
+
+// POST api to add user
+app.post('/api/app/users', async (req, res) => {
+  const {
+    username,
+    email,
+    password,
+    usertype,
+    firstname,
+    lastname,
+    birthdate,
+    contact,
+    address,
+    gender,
+    allergies,
+    medicalhistory
+  } = req.body;
+
+  // Basic validation (add more as needed)
+  if (!username || !email || !password || !usertype || !firstname || !lastname) {
+    return res.status(400).json({ message: 'Required fields missing' });
+  }
+
+  try {
+    // Check if username or email already exists (optional but recommended)
+    const userCheck = await pool.query(
+      'SELECT * FROM users WHERE username = $1 OR email = $2',
+      [username, email]
+    );
+
+    if (userCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Username or email already exists' });
+    }
+
+    // Insert new user
+    const insertQuery = `
+      INSERT INTO users (
+        username, email, password, usertype, firstname, lastname,
+        birthdate, contact, address, gender, allergies, medicalhistory
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      RETURNING *;
+    `;
+
+    const values = [
+      username,
+      email,
+      password,  // You should hash this before saving in production!
+      usertype,
+      firstname,
+      lastname,
+      birthdate,
+      contact,
+      address,
+      gender,
+      allergies,
+      medicalhistory,
+    ];
+
+    const result = await pool.query(insertQuery, values);
+
+    res.status(201).json({
+      message: 'User created successfully',
+      user: result.rows[0],
+    });
+  } catch (error) {
+    console.error('Error adding user:', error.message);
+    res.status(500).json({ message: 'Error adding user', error: error.message });
+  }
+});
 
 app.get('/api/app/appointments/search', async (req, res) => { 
   const { dentist, patient, startDate, endDate } = req.query;
