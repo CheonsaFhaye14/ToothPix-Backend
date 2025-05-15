@@ -853,6 +853,24 @@ app.delete('/api/app/services/:id', async (req, res) => {
     res.status(500).json({ message: 'Error deleting service', error: err.message });
   }
 });
+// Delete User
+app.delete('/api/app/users/:id', async (req, res) => {
+  const userId = req.params.id;
+  const query = 'DELETE FROM users WHERE idusers = $1';
+
+  try {
+    const result = await pool.query(query, [userId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ message: 'User deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting user:', err.message);
+    res.status(500).json({ message: 'Error deleting user', error: err.message });
+  }
+});
 
 // Start server
 app.listen(PORT, () => {
