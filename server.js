@@ -655,29 +655,40 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 
 
 // ✅ ADD SERVICE ROUTES HERE
-
 app.post('/api/app/services', async (req, res) => {
-  const { name, description, price } = req.body;
+  const { name, description, price, category } = req.body;
 
-  // Basic manual checking
+  // Validation
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
-  
+
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
-  // Log input values for debugging
-  console.log('Received data:', { name, description, price });
+  if (!category || typeof category !== 'string' || category.trim().length === 0) {
+    return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
+  }
 
-  const query = 'INSERT INTO service (name, description, price) VALUES ($1, $2, $3) RETURNING idservice, name, description, price';
+  // Debug log
+  console.log('Received data:', { name, description, price, category });
+
+  const query = `
+    INSERT INTO service (name, description, price, category)
+    VALUES ($1, $2, $3, $4)
+    RETURNING idservice, name, description, price, category
+  `;
 
   try {
-    const result = await pool.query(query, [name.trim(), description, parseFloat(price)]);
+    const result = await pool.query(query, [
+      name.trim(),
+      description,
+      parseFloat(price),
+      category.trim()
+    ]);
     const service = result.rows[0];
 
-    // Log successful insertion
     console.log('Service added:', service);
 
     res.status(201).json({
@@ -685,15 +696,15 @@ app.post('/api/app/services', async (req, res) => {
       service,
     });
   } catch (err) {
-    // Log error details for debugging
     console.error('Error adding service:', err.message);
 
-    res.status(500).json({ 
-      message: 'Error adding service', 
-      error: err.message 
+    res.status(500).json({
+      message: 'Error adding service',
+      error: err.message,
     });
   }
 });
+
 // Get all services route
 app.get('/api/app/services', async (req, res) => {
   const query = 'SELECT * FROM service';
