@@ -73,6 +73,97 @@ app.get('/api/app/admin', async (req, res) => {
   }
 });
 
+app.put('/api/app/users/:id', async (req, res) => {
+  const userId = req.params.id;
+  const {
+    username,
+    email,
+    password,
+    usertype, // ✅ now editable, but validated
+    firstname,
+    lastname,
+    birthdate,
+    contact,
+    address,
+    gender,
+    allergies,
+    medicalhistory
+  } = req.body;
+
+  // Validate required fields
+  if (!username || !email || !firstname || !lastname || !usertype) {
+    return res.status(400).json({ message: 'Required fields missing' });
+  }
+
+  // Validate usertype
+  const validUsertypes = ['patient', 'dentist', 'admin'];
+  if (!validUsertypes.includes(usertype.toLowerCase())) {
+    return res.status(400).json({ message: 'Invalid usertype. Must be patient, dentist, or admin.' });
+  }
+
+  try {
+    // Get existing user
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const existingUser = userResult.rows[0];
+
+    // Hash password only if it changed
+    let hashedPassword = existingUser.password;
+    if (password && password !== existingUser.password) {
+      hashedPassword = await bcrypt.hash(password, 10);
+    }
+
+    const updateQuery = `
+      UPDATE users
+      SET username = $1,
+          email = $2,
+          password = $3,
+          usertype = $4,
+          firstname = $5,
+          lastname = $6,
+          birthdate = $7,
+          contact = $8,
+          address = $9,
+          gender = $10,
+          allergies = $11,
+          medicalhistory = $12
+      WHERE id = $13
+      RETURNING *;
+    `;
+
+    const values = [
+      username,
+      email,
+      hashedPassword,
+      usertype.toLowerCase(),
+      firstname,
+      lastname,
+      birthdate,
+      contact,
+      address,
+      gender,
+      allergies,
+      medicalhistory,
+      userId,
+    ];
+
+    const result = await pool.query(updateQuery, values);
+
+    res.status(200).json({
+      message: 'User updated successfully',
+      user: result.rows[0],
+    });
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ message: 'Username or email already exists' });
+    }
+    console.error('Error updating user:', error.message);
+    res.status(500).json({ message: 'Error updating user', error: error.message });
+  }
+});
 
 
 app.post('/api/app/users', async (req, res) => {
