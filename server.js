@@ -53,6 +53,25 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+// Delete Appointment
+app.delete('/api/app/appointments/:id', async (req, res) => {
+  const appointmentId = req.params.id;
+  const query = 'DELETE FROM appointment WHERE idappointment = $1';
+
+  try {
+    const result = await pool.query(query, [appointmentId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+
+    res.status(200).json({ message: 'Appointment deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting appointment:', err.message);
+    res.status(500).json({ message: 'Error deleting appointment', error: err.message });
+  }
+});
+
 
 app.get('/api/app/admin', async (req, res) => {
   const query = "SELECT idUsers, email, username FROM users WHERE usertype = 'admin'";
