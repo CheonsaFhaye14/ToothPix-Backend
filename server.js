@@ -72,14 +72,13 @@ app.get('/api/app/admin', async (req, res) => {
     res.status(500).json({ message: 'Error fetching admin', error: err.message });
   }
 });
-
 app.put('/api/app/users/:id', async (req, res) => {
   const userId = req.params.id;
   const {
     username,
     email,
     password,
-    usertype, // ✅ now editable, but validated
+    usertype,
     firstname,
     lastname,
     birthdate,
@@ -90,30 +89,47 @@ app.put('/api/app/users/:id', async (req, res) => {
     medicalhistory
   } = req.body;
 
-  // Validate required fields
   if (!username || !email || !firstname || !lastname || !usertype) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
-  // Validate usertype
   const validUsertypes = ['patient', 'dentist', 'admin'];
   if (!validUsertypes.includes(usertype.toLowerCase())) {
     return res.status(400).json({ message: 'Invalid usertype. Must be patient, dentist, or admin.' });
   }
 
   try {
-    // Get existing user
+    // Check if user exists
     const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    const existingUser = userResult.rows[0];
-let hashedPassword = existingUser.password;
+    // Check if username already exists for another user
+    const usernameCheck = await pool.query(
+      'SELECT * FROM users WHERE username = $1 AND id != $2',
+      [username, userId]
+    );
+    if (usernameCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Username already exists' });
+    }
 
-if (password && !(await bcrypt.compare(password, existingUser.password))) {
-  hashedPassword = await bcrypt.hash(password, 10);
-}
+    // Check if email already exists for another user
+    const emailCheck = await pool.query(
+      'SELECT * FROM users WHERE email = $1 AND id != $2',
+      [email, userId]
+    );
+    if (emailCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Email already exists' });
+    }
+
+    const existingUser = userResult.rows[0];
+    let hashedPassword = existingUser.password;
+
+    // Only re-hash if password is changed
+    if (password && !(await bcrypt.compare(password, existingUser.password))) {
+      hashedPassword = await bcrypt.hash(password, 10);
+    }
 
     const updateQuery = `
       UPDATE users
@@ -155,10 +171,8 @@ if (password && !(await bcrypt.compare(password, existingUser.password))) {
       message: 'User updated successfully',
       user: result.rows[0],
     });
+
   } catch (error) {
-    if (error.code === '23505') {
-      return res.status(409).json({ message: 'Username or email already exists' });
-    }
     console.error('Error updating user:', error.message);
     res.status(500).json({ message: 'Error updating user', error: error.message });
   }
