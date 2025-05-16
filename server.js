@@ -73,7 +73,6 @@ app.get('/api/app/admin', async (req, res) => {
   }
 });
 
-// POST api to add user
 app.post('/api/app/users', async (req, res) => {
   const {
     username,
@@ -96,7 +95,7 @@ app.post('/api/app/users', async (req, res) => {
   }
 
   try {
-    // Check if username or email already exists (optional but recommended)
+    // Check if username or email already exists
     const userCheck = await pool.query(
       'SELECT * FROM users WHERE username = $1 OR email = $2',
       [username, email]
@@ -137,10 +136,15 @@ app.post('/api/app/users', async (req, res) => {
       user: result.rows[0],
     });
   } catch (error) {
+    // Handle duplicate key error from PostgreSQL
+    if (error.code === '23505') { // unique violation
+      return res.status(409).json({ message: 'Username or email already exists' });
+    }
     console.error('Error adding user:', error.message);
     res.status(500).json({ message: 'Error adding user', error: error.message });
   }
 });
+
 
 app.get('/api/app/appointments/search', async (req, res) => { 
   const { dentist, patient, startDate, endDate } = req.query;
