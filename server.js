@@ -73,6 +73,8 @@ app.get('/api/app/admin', async (req, res) => {
   }
 });
 
+
+
 app.post('/api/app/users', async (req, res) => {
   const {
     username,
@@ -89,7 +91,7 @@ app.post('/api/app/users', async (req, res) => {
     medicalhistory
   } = req.body;
 
-  // Basic validation (add more as needed)
+  // Basic validation
   if (!username || !email || !password || !usertype || !firstname || !lastname) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
@@ -105,7 +107,10 @@ app.post('/api/app/users', async (req, res) => {
       return res.status(409).json({ message: 'Username or email already exists' });
     }
 
-    // Insert new user
+    // ✅ Hash the password before saving
+    const hashedPassword = await bcrypt.hash(password, 10); // 10 = salt rounds
+
+    // Insert new user with hashed password
     const insertQuery = `
       INSERT INTO users (
         username, email, password, usertype, firstname, lastname,
@@ -117,7 +122,7 @@ app.post('/api/app/users', async (req, res) => {
     const values = [
       username,
       email,
-      password,  // You should hash this before saving in production!
+      hashedPassword, // ✅ Use hashed password here
       usertype,
       firstname,
       lastname,
@@ -136,8 +141,7 @@ app.post('/api/app/users', async (req, res) => {
       user: result.rows[0],
     });
   } catch (error) {
-    // Handle duplicate key error from PostgreSQL
-    if (error.code === '23505') { // unique violation
+    if (error.code === '23505') {
       return res.status(409).json({ message: 'Username or email already exists' });
     }
     console.error('Error adding user:', error.message);
