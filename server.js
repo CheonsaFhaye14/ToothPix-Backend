@@ -109,12 +109,11 @@ app.put('/api/app/users/:id', async (req, res) => {
     }
 
     const existingUser = userResult.rows[0];
+let hashedPassword = existingUser.password;
 
-    // Hash password only if it changed
-    let hashedPassword = existingUser.password;
-    if (password && password !== existingUser.password) {
-      hashedPassword = await bcrypt.hash(password, 10);
-    }
+if (password && !(await bcrypt.compare(password, existingUser.password))) {
+  hashedPassword = await bcrypt.hash(password, 10);
+}
 
     const updateQuery = `
       UPDATE users
