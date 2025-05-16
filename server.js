@@ -72,6 +72,7 @@ app.get('/api/app/admin', async (req, res) => {
     res.status(500).json({ message: 'Error fetching admin', error: err.message });
   }
 });
+
 app.put('/api/app/users/:id', async (req, res) => {
   const userId = req.params.id;
   const {
@@ -100,25 +101,25 @@ app.put('/api/app/users/:id', async (req, res) => {
 
   try {
     // Check if user exists
-    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+    const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     // Check if username already exists for another user
     const usernameCheck = await pool.query(
-      'SELECT * FROM users WHERE username = $1 AND id != $2',
-      [username, userId]
-    );
+  'SELECT * FROM users WHERE username = $1 AND idusers != $2',
+  [username, userId]
+);
     if (usernameCheck.rows.length > 0) {
       return res.status(409).json({ message: 'Username already exists' });
     }
 
-    // Check if email already exists for another user
-    const emailCheck = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND id != $2',
-      [email, userId]
-    );
+  // Check if email already exists for another user
+const emailCheck = await pool.query(
+  'SELECT * FROM users WHERE email = $1 AND idusers != $2',
+  [email, userId]
+);
     if (emailCheck.rows.length > 0) {
       return res.status(409).json({ message: 'Email already exists' });
     }
@@ -131,23 +132,24 @@ app.put('/api/app/users/:id', async (req, res) => {
       hashedPassword = await bcrypt.hash(password, 10);
     }
 
-    const updateQuery = `
-      UPDATE users
-      SET username = $1,
-          email = $2,
-          password = $3,
-          usertype = $4,
-          firstname = $5,
-          lastname = $6,
-          birthdate = $7,
-          contact = $8,
-          address = $9,
-          gender = $10,
-          allergies = $11,
-          medicalhistory = $12
-      WHERE id = $13
-      RETURNING *;
-    `;
+    // Update user record
+const updateQuery = `
+  UPDATE users
+  SET username = $1,
+      email = $2,
+      password = $3,
+      usertype = $4,
+      firstname = $5,
+      lastname = $6,
+      birthdate = $7,
+      contact = $8,
+      address = $9,
+      gender = $10,
+      allergies = $11,
+      medicalhistory = $12
+  WHERE idusers = $13
+  RETURNING *;
+`;
 
     const values = [
       username,
