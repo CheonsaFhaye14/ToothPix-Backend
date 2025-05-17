@@ -109,21 +109,23 @@ app.delete('/api/app/appointments/:id', async (req, res) => {
   }
 });
 
-// GET /appointment-services/:idappointment
 app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
 
   try {
-    const result = await db.query(`
-      SELECT idservice FROM appointment_services WHERE idappointment = $1
-    `, [idappointment]);
+    const result = await db.query(
+      'SELECT idservice FROM appointment_services WHERE idappointment = $1',
+      [idappointment]
+    );
 
-    res.json({ services: result.rows }); // returns [{ idservice: 38 }]
-  } catch (err) {
-    console.error(err);
+    const services = result.rows.map(row => row.idservice);
+    res.json({ services });
+  } catch (error) {
+    console.error('Error fetching services for appointment:', error.message);
     res.status(500).json({ error: 'Error fetching services for appointment' });
   }
 });
+
 
 
 app.get('/api/app/admin', async (req, res) => {
