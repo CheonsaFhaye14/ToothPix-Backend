@@ -110,8 +110,8 @@ app.delete('/api/app/appointments/:id', async (req, res) => {
 
     res.status(200).json({ message: 'Appointment deleted successfully' });
   } catch (err) {
-    console.error('Error deleting appointment:', err);
-    res.status(500).json({ message: 'Error deleting appointment', error: err.message });
+    console.error('Error deleting, appointment in use:', err);
+    res.status(500).json({ message: 'Error deleting, appointment in use', error: err.message });
   }
 });
 
@@ -632,8 +632,8 @@ app.delete('/api/app/records/:id', async (req, res) => {
 
     res.status(200).json({ message: 'Record deleted successfully' });
   } catch (err) {
-    console.error('Error deleting record:', err.message);
-    res.status(500).json({ message: 'Error deleting record', error: err.message });
+    console.error('Error deleting, record in use:', err.message);
+    res.status(500).json({ message: 'Error deleting, record in use', error: err.message });
   }
 });
 
@@ -1094,8 +1094,8 @@ app.delete('/api/app/services/:id', async (req, res) => {
 
     res.status(200).json({ message: 'Service deleted successfully' });
   } catch (err) {
-    console.error('Error deleting service:', err.message);
-    res.status(500).json({ message: 'Error deleting service', error: err.message });
+    console.error('Error deleting, service in use:', err.message);
+    res.status(500).json({ message: 'Error deleting, service in use', error: err.message });
   }
 });
 // Delete User
@@ -1112,8 +1112,8 @@ app.delete('/api/app/users/:id', async (req, res) => {
 
     res.status(200).json({ message: 'User deleted successfully' });
   } catch (err) {
-    console.error('Error deleting user:', err.message);
-    res.status(500).json({ message: 'Error deleting user', error: err.message });
+    console.error('Error deleting, user in use:', err.message);
+    res.status(500).json({ message: 'Error deleting, user in use', error: err.message });
   }
 });
 
