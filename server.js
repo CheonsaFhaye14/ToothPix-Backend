@@ -113,7 +113,7 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
 
   try {
-    const result = await db.query(
+    const result = await pool.query(
       `SELECT s.idservice, s.name
        FROM appointment_services aps
        JOIN service s ON aps.idservice = s.idservice
