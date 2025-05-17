@@ -90,9 +90,15 @@ app.post('/api/app/appointments', async (req, res) => {
 });
 
 
-// Delete Appointment
 app.delete('/api/app/appointments/:id', async (req, res) => {
-  const appointmentId = req.params.id;
+  const appointmentId = parseInt(req.params.id, 10);
+
+  if (isNaN(appointmentId)) {
+    return res.status(400).json({ message: 'Invalid appointment ID' });
+  }
+
+  console.log('Deleting appointment with id:', appointmentId, 'type:', typeof appointmentId);
+
   const query = 'DELETE FROM appointment WHERE idappointment = $1';
 
   try {
@@ -104,10 +110,11 @@ app.delete('/api/app/appointments/:id', async (req, res) => {
 
     res.status(200).json({ message: 'Appointment deleted successfully' });
   } catch (err) {
-    console.error('Error deleting appointment:', err.message);
+    console.error('Error deleting appointment:', err);
     res.status(500).json({ message: 'Error deleting appointment', error: err.message });
   }
 });
+
 
 app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
