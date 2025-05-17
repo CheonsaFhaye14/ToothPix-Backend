@@ -114,11 +114,14 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
 
   try {
     const result = await db.query(
-      'SELECT idservice FROM appointment_services WHERE idappointment = $1',
+      `SELECT s.idservice, s.name
+       FROM appointment_services aps
+       JOIN service s ON aps.idservice = s.idservice
+       WHERE aps.idappointment = $1`,
       [idappointment]
     );
 
-    const services = result.rows.map(row => row.idservice);
+    const services = result.rows; // now contains idservice and name
     res.json({ services });
   } catch (error) {
     console.error('Error fetching services for appointment:', error.message);
