@@ -264,7 +264,53 @@ const updateQuery = `
   }
 });
 
+app.get('/api/app/records', async (req, res) => {
+  const query = `
+    SELECT 
+      r.idrecord,
+      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname,
+      r.treatment_notes,
+      r.paymentstatus,
+      r.idappointment,
+      a.date AS appointmentDate,
+      COALESCE(
+        (
+          SELECT STRING_AGG(s.name, ', ')
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), ''
+      ) AS services,
+      COALESCE(
+        (
+          SELECT SUM(s.price)
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), 0
+      ) AS totalPrice
+    FROM records r
+    JOIN users p ON r.idpatient = p.idusers
+    JOIN users d ON r.iddentist = d.idusers
+    JOIN appointment a ON r.idappointment = a.idappointment
+    ORDER BY r.idrecord DESC;
+  `;
 
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No records found' });
+    }
+
+    res.status(200).json({ records: result.rows });
+  } catch (err) {
+    console.error('Error fetching records:', err.message);
+    res.status(500).json({ message: 'Error fetching records', error: err.message });
+  }
+});
+ 
 app.post('/api/app/users', async (req, res) => {
   const {
     username,
@@ -542,24 +588,24 @@ app.post('/api/app/records', async (req, res) => {
 });
 
 // Get all records
-app.get('/api/app/records', async (req, res) => {
-  const query = 'SELECT * FROM records';
+// app.get('/api/app/records', async (req, res) => {
+//   const query = 'SELECT * FROM records';
 
-  try {
-    const result = await pool.query(query);
+//   try {
+//     const result = await pool.query(query);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No records found' });
-    }
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({ message: 'No records found' });
+//     }
 
-    res.status(200).json({
-      records: result.rows
-    });
-  } catch (err) {
-    console.error('Error fetching records:', err.message);
-    res.status(500).json({ message: 'Error fetching records', error: err.message });
-  }
-});
+//     res.status(200).json({
+//       records: result.rows
+//     });
+//   } catch (err) {
+//     console.error('Error fetching records:', err.message);
+//     res.status(500).json({ message: 'Error fetching records', error: err.message });
+//   }
+// });
 
 // Get all users
 app.get('/api/app/users', async (req, res) => {
