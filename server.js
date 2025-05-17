@@ -290,11 +290,12 @@ app.get('/api/app/records', async (req, res) => {
           WHERE aps.idappointment = r.idappointment
         ), 0
       ) AS totalPrice
-    FROM records r
-    JOIN users p ON r.idpatient = p.idusers
-    JOIN users d ON r.iddentist = d.idusers
-    JOIN appointment a ON r.idappointment = a.idappointment
-    ORDER BY r.idrecord DESC;
+    FROM users p
+    LEFT JOIN records r ON r.idpatient = p.idusers
+    LEFT JOIN users d ON r.iddentist = d.idusers
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment
+    WHERE p.usertype = 'patient'
+    ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
   try {
@@ -310,6 +311,7 @@ app.get('/api/app/records', async (req, res) => {
     res.status(500).json({ message: 'Error fetching records', error: err.message });
   }
 });
+
  
 app.post('/api/app/users', async (req, res) => {
   const {
