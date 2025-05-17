@@ -53,6 +53,43 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+app.post('/api/app/appointments', async (req, res) => {
+  const { idpatient, iddentist, date, status, notes, idservice } = req.body;
+
+  if (!idpatient || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice array are required.' });
+  }
+
+  try {
+    // 1. Insert appointment without services first
+    const appointmentInsertQuery = `
+      INSERT INTO appointment (idpatient, iddentist, date, status, notes)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING idappointment, idpatient, iddentist, date, status, notes
+    `;
+    const appointmentResult = await pool.query(appointmentInsertQuery, [idpatient, iddentist, date, status || 'pending', notes || '']);
+    const appointment = appointmentResult.rows[0];
+
+    // 2. Insert into appointment_services for each service ID
+    const serviceInsertPromises = idservice.map(serviceId => {
+      const insertQuery = `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`;
+      return pool.query(insertQuery, [appointment.idappointment, serviceId]);
+    });
+    await Promise.all(serviceInsertPromises);
+
+    // 3. Return success with appointment info (you might want to add services on response later)
+    res.status(201).json({
+      message: 'Appointment created successfully',
+      appointment,
+    });
+
+  } catch (err) {
+    console.error('Error creating appointment:', err.message);
+    res.status(500).json({ message: 'Error creating appointment', error: err.message });
+  }
+});
+
+
 // Delete Appointment
 app.delete('/api/app/appointments/:id', async (req, res) => {
   const appointmentId = req.params.id;
@@ -719,34 +756,34 @@ app.get('/api/app/patients', async (req, res) => {
   }
 });
 
-// ✅ Create a new appointment
-app.post('/api/app/appointments', async (req, res) => {
-  const { idpatient, iddentist, date, status, notes, idservice } = req.body;
+// // ✅ Create a new appointment //app
+// app.post('/api/app/appointments', async (req, res) => {
+//   const { idpatient, iddentist, date, status, notes, idservice } = req.body;
 
-  // Validate required fields
-  if (!idpatient || !iddentist || !date || !idservice) {
-    return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice are required.' });
-  }
+//   // Validate required fields
+//   if (!idpatient || !iddentist || !date || !idservice) {
+//     return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice are required.' });
+//   }
 
-  const query = `
-    INSERT INTO appointment (idpatient, iddentist, date, status, notes, idservice)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING idappointment, idpatient, iddentist, date, status, notes, idservice
-  `;
+//   const query = `
+//     INSERT INTO appointment (idpatient, iddentist, date, status, notes, idservice)
+//     VALUES ($1, $2, $3, $4, $5, $6)
+//     RETURNING idappointment, idpatient, iddentist, date, status, notes, idservice
+//   `;
 
-  try {
-    const result = await pool.query(query, [idpatient, iddentist, date, status || 'pending', notes || '', idservice]);
-    const appointment = result.rows[0];
+//   try {
+//     const result = await pool.query(query, [idpatient, iddentist, date, status || 'pending', notes || '', idservice]);
+//     const appointment = result.rows[0];
 
-    res.status(201).json({
-      message: 'Appointment created successfully',
-      appointment,
-    });
-  } catch (err) {
-    console.error('Error creating appointment:', err.message);
-    res.status(500).json({ message: 'Error creating appointment', error: err.message });
-  }
-});
+//     res.status(201).json({
+//       message: 'Appointment created successfully',
+//       appointment,
+//     });
+//   } catch (err) {
+//     console.error('Error creating appointment:', err.message);
+//     res.status(500).json({ message: 'Error creating appointment', error: err.message });
+//   }
+// });
 
 // Get all appointments route
 app.get('/api/app/appointments', async (req, res) => {
