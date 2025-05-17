@@ -630,85 +630,132 @@ app.delete('/api/app/records/:id', async (req, res) => {
   }
 });
 
-app.put('/api/app/appointments/:id', async (req, res) => {
-  const id = req.params.id;
-  const { status, notes, date } = req.body;
+//app
+// app.put('/api/app/appointments/:id', async (req, res) => {
+//   const id = req.params.id;
+//   const { status, notes, date } = req.body;
 
-  // Supported statuses
-  const allowedStatuses = ['approved', 'cancelled', 'rescheduled', 'declined'];
+//   // Supported statuses
+//   const allowedStatuses = ['approved', 'cancelled', 'rescheduled', 'declined'];
 
-  // Validate status
-  if (!status || !allowedStatuses.includes(status)) {
-    return res.status(400).json({ message: 'Invalid or missing status' });
-  }
+//   // Validate status
+//   if (!status || !allowedStatuses.includes(status)) {
+//     return res.status(400).json({ message: 'Invalid or missing status' });
+//   }
 
-  // Auto-generate notes if not provided
-  const now = new Date();
+//   // Auto-generate notes if not provided
+//   const now = new Date();
   
-  // Format the date as "YYYY-MM-DD HH:mm"
-  const formattedDate = now.toISOString().slice(0, 16).replace("T", " "); // e.g., "2025-05-04 21:42"
+//   // Format the date as "YYYY-MM-DD HH:mm"
+//   const formattedDate = now.toISOString().slice(0, 16).replace("T", " "); // e.g., "2025-05-04 21:42"
 
-  let finalNotes = notes;
+//   let finalNotes = notes;
 
-  if (!notes) {
-    if (status === 'approved') {
-      finalNotes = `Approved by dentist on ${formattedDate}`;
-    } else if (status === 'declined' || status === 'cancelled') {
-      finalNotes = `Cancelled by dentist on ${formattedDate}. Please reschedule.`;
-    } else if (status === 'rescheduled' && date) {
-      finalNotes = `Rescheduled to ${date}`;
-    }
+//   if (!notes) {
+//     if (status === 'approved') {
+//       finalNotes = `Approved by dentist on ${formattedDate}`;
+//     } else if (status === 'declined' || status === 'cancelled') {
+//       finalNotes = `Cancelled by dentist on ${formattedDate}. Please reschedule.`;
+//     } else if (status === 'rescheduled' && date) {
+//       finalNotes = `Rescheduled to ${date}`;
+//     }
+//   }
+
+//   // Initialize query components
+//   const setValues = [];
+//   const queryParams = [];
+//   let query = 'UPDATE appointment SET ';
+
+//   // Set fields to update
+//   if (status) {
+//     setValues.push(`status = $${setValues.length + 1}`);
+//     queryParams.push(status);
+//   }
+
+//   if (finalNotes !== undefined) {
+//     setValues.push(`notes = $${setValues.length + 1}`);
+//     queryParams.push(finalNotes);
+//   }
+
+//   if (date && !isNaN(Date.parse(date))) {
+//     setValues.push(`date = $${setValues.length + 1}`);
+//     queryParams.push(date);
+//   }
+
+//   if (setValues.length === 0) {
+//     return res.status(400).json({ message: 'No valid fields to update' });
+//   }
+
+//   // Build final SQL query
+//   query += setValues.join(', ');
+//   query += ` WHERE idappointment = $${setValues.length + 1} RETURNING *`;
+//   queryParams.push(id);
+
+//   try {
+//     const result = await pool.query(query, queryParams);
+
+//     if (result.rowCount === 0) {
+//       return res.status(404).json({ message: 'Appointment not found.' });
+//     }
+
+//     res.json({
+//       message: 'Appointment updated successfully',
+//       appointment: result.rows[0],
+//     });
+//   } catch (err) {
+//     console.error('Error updating appointment:', err.message);
+//     res.status(500).json({
+//       message: 'Error updating appointment',
+//       error: err.message,
+//     });
+//   }
+// });
+
+app.put('/api/app/appointments/:id', async (req, res) => {
+  const idappointment = req.params.id;
+  const { idpatient, iddentist, date, status, notes, idservice } = req.body;
+
+  if (!idpatient || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice array are required.' });
   }
-
-  // Initialize query components
-  const setValues = [];
-  const queryParams = [];
-  let query = 'UPDATE appointment SET ';
-
-  // Set fields to update
-  if (status) {
-    setValues.push(`status = $${setValues.length + 1}`);
-    queryParams.push(status);
-  }
-
-  if (finalNotes !== undefined) {
-    setValues.push(`notes = $${setValues.length + 1}`);
-    queryParams.push(finalNotes);
-  }
-
-  if (date && !isNaN(Date.parse(date))) {
-    setValues.push(`date = $${setValues.length + 1}`);
-    queryParams.push(date);
-  }
-
-  if (setValues.length === 0) {
-    return res.status(400).json({ message: 'No valid fields to update' });
-  }
-
-  // Build final SQL query
-  query += setValues.join(', ');
-  query += ` WHERE idappointment = $${setValues.length + 1} RETURNING *`;
-  queryParams.push(id);
 
   try {
-    const result = await pool.query(query, queryParams);
+    // 1. Update the appointment info
+    const updateAppointmentQuery = `
+      UPDATE appointment
+      SET idpatient = $1, iddentist = $2, date = $3, status = $4, notes = $5
+      WHERE idappointment = $6
+      RETURNING idappointment, idpatient, iddentist, date, status, notes
+    `;
+    const result = await pool.query(updateAppointmentQuery, [idpatient, iddentist, date, status || 'pending', notes || '', idappointment]);
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Appointment not found.' });
+      return res.status(404).json({ message: 'Appointment not found' });
     }
 
+    const updatedAppointment = result.rows[0];
+
+    // 2. Delete existing services for this appointment
+    await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
+
+    // 3. Re-insert the new set of services
+    const insertServicePromises = idservice.map(serviceId => {
+      return pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, serviceId]);
+    });
+    await Promise.all(insertServicePromises);
+
+    // 4. Respond with success
     res.json({
       message: 'Appointment updated successfully',
-      appointment: result.rows[0],
+      appointment: updatedAppointment,
     });
-  } catch (err) {
-    console.error('Error updating appointment:', err.message);
-    res.status(500).json({
-      message: 'Error updating appointment',
-      error: err.message,
-    });
+
+  } catch (error) {
+    console.error('Error updating appointment:', error.message);
+    res.status(500).json({ message: 'Error updating appointment', error: error.message });
   }
 });
+
 
 
 // Register route
