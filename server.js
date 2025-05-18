@@ -265,38 +265,40 @@ const updateQuery = `
 });
 
 app.get('/api/app/records', async (req, res) => {
-  const query = `
-    SELECT 
-      r.idrecord,
-      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,
-      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname,
-      r.treatment_notes,
-      r.paymentstatus,
-      r.idappointment,
-      a.date AS appointmentDate,
-      COALESCE(
-        (
-          SELECT STRING_AGG(s.name, ', ')
-          FROM appointment_services aps
-          JOIN service s ON aps.idservice = s.idservice
-          WHERE aps.idappointment = r.idappointment
-        ), ''
-      ) AS services,
-      COALESCE(
-        (
-          SELECT SUM(s.price)
-          FROM appointment_services aps
-          JOIN service s ON aps.idservice = s.idservice
-          WHERE aps.idappointment = r.idappointment
-        ), 0
-      ) AS totalPrice
-    FROM users p
-    LEFT JOIN records r ON r.idpatient = p.idusers
-    LEFT JOIN users d ON r.iddentist = d.idusers
-    LEFT JOIN appointment a ON r.idappointment = a.idappointment
-    WHERE p.usertype = 'patient'
-    ORDER BY r.idrecord DESC NULLS LAST;
-  `;
+ const query = `
+  SELECT 
+    p.idusers AS idpatient, -- ✅ Add patient ID here
+    r.idrecord,
+    CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,
+    CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname,
+    r.treatment_notes,
+    r.paymentstatus,
+    r.idappointment,
+    a.date AS appointmentDate,
+    COALESCE(
+      (
+        SELECT STRING_AGG(s.name, ', ')
+        FROM appointment_services aps
+        JOIN service s ON aps.idservice = s.idservice
+        WHERE aps.idappointment = r.idappointment
+      ), ''
+    ) AS services,
+    COALESCE(
+      (
+        SELECT SUM(s.price)
+        FROM appointment_services aps
+        JOIN service s ON aps.idservice = s.idservice
+        WHERE aps.idappointment = r.idappointment
+      ), 0
+    ) AS totalPrice
+  FROM users p
+  LEFT JOIN records r ON r.idpatient = p.idusers
+  LEFT JOIN users d ON r.iddentist = d.idusers
+  LEFT JOIN appointment a ON r.idappointment = a.idappointment
+  WHERE p.usertype = 'patient'
+  ORDER BY r.idrecord DESC NULLS LAST;
+`;
+
 
   try {
     const result = await pool.query(query);
