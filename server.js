@@ -563,22 +563,31 @@ app.post('/api/app/admin', [
   }
 });
 
-// Create a new record
 app.post('/api/app/records', async (req, res) => {
   const { idpatient, iddentist, idappointment, treatment_notes, paymentstatus } = req.body;
 
-  // Validate required fields
   if (!idpatient || !iddentist || !idappointment) {
     return res.status(400).json({ message: 'idpatient, iddentist, and idappointment are required.' });
   }
 
-  const query = `
-    INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, paymentstatus)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, paymentstatus
-  `;
-
   try {
+    // Check if a record already exists for this idappointment
+    const existing = await pool.query(
+      'SELECT 1 FROM records WHERE idappointment = $1',
+      [idappointment]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ message: 'A record for this appointment already exists.' });
+    }
+
+    // Insert new record
+    const query = `
+      INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, paymentstatus)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, paymentstatus
+    `;
+
     const result = await pool.query(query, [idpatient, iddentist, idappointment, treatment_notes, paymentstatus]);
     const record = result.rows[0];
 
@@ -591,6 +600,7 @@ app.post('/api/app/records', async (req, res) => {
     res.status(500).json({ message: 'Error creating record', error: err.message });
   }
 });
+
 
 // Get all records
 // app.get('/api/app/records', async (req, res) => {
