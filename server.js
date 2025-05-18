@@ -642,42 +642,75 @@ app.get('/api/app/users', async (req, res) => {
   }
 });
 
-// Update a record
-app.put('/api/app/records/:id', async (req, res) => {
-  const id = req.params.id;
+// // Update a record
+// app.put('/api/app/records/:id', async (req, res) => {
+//   const id = req.params.id;
+//   const { treatment_notes, paymentstatus } = req.body;
+
+//   // Validate input
+//   const allowedStatuses = ['paid', 'unpaid', 'partial'];
+//   if (paymentstatus && !allowedStatuses.includes(paymentstatus)) {
+//     return res.status(400).json({ message: 'Invalid payment status' });
+//   }
+
+//   const query = `
+//     UPDATE records 
+//     SET treatment_notes = $1, paymentstatus = $2
+//     WHERE idrecord = $3
+//     RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, paymentstatus
+//   `;
+
+//   try {
+//     const result = await pool.query(query, [treatment_notes, paymentstatus, id]);
+
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({ message: 'Record not found' });
+//     }
+
+//     const updatedRecord = result.rows[0];
+
+//     res.status(200).json({
+//       message: 'Record updated successfully',
+//       record: updatedRecord,
+//     });
+//   } catch (err) {
+//     console.error('Error updating record:', err.message);
+//     res.status(500).json({ message: 'Error updating record', error: err.message });
+//   }
+// });
+
+app.put('/api/app/records/:idrecord', async (req, res) => {
+  const { idrecord } = req.params;
   const { treatment_notes, paymentstatus } = req.body;
 
-  // Validate input
-  const allowedStatuses = ['paid', 'unpaid', 'partial'];
-  if (paymentstatus && !allowedStatuses.includes(paymentstatus)) {
-    return res.status(400).json({ message: 'Invalid payment status' });
+  if (!idrecord) {
+    return res.status(400).json({ message: 'idrecord is required.' });
   }
 
-  const query = `
-    UPDATE records 
-    SET treatment_notes = $1, paymentstatus = $2
-    WHERE idrecord = $3
-    RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, paymentstatus
-  `;
-
   try {
-    const result = await pool.query(query, [treatment_notes, paymentstatus, id]);
+    const result = await pool.query(
+      `UPDATE records
+       SET treatment_notes = $1,
+           paymentstatus = $2
+       WHERE idrecord = $3
+       RETURNING *`,
+      [treatment_notes, paymentstatus, idrecord]
+    );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Record not found' });
+      return res.status(404).json({ message: 'Record not found.' });
     }
 
-    const updatedRecord = result.rows[0];
-
-    res.status(200).json({
+    res.json({
       message: 'Record updated successfully',
-      record: updatedRecord,
+      record: result.rows[0],
     });
   } catch (err) {
     console.error('Error updating record:', err.message);
     res.status(500).json({ message: 'Error updating record', error: err.message });
   }
 });
+
 
 // Delete a record
 app.delete('/api/app/records/:id', async (req, res) => {
