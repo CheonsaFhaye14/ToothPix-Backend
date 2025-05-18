@@ -121,20 +121,21 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT s.idservice, s.name
+      `SELECT s.idservice, s.name, s.price
        FROM appointment_services aps
        JOIN service s ON aps.idservice = s.idservice
        WHERE aps.idappointment = $1`,
       [idappointment]
     );
 
-    const services = result.rows; // now contains idservice and name
+    const services = result.rows; // contains idservice, name, and price
     res.json({ services });
   } catch (error) {
     console.error('Error fetching services for appointment:', error.message);
     res.status(500).json({ error: 'Error fetching services for appointment' });
   }
 });
+
 
 
 
