@@ -88,7 +88,103 @@ app.post('/api/app/appointments', async (req, res) => {
     res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
+app.get('/api/app/patientrecords/:id', async (req, res) => {
+  const patientId = req.params.id;
 
+  const query = `
+    SELECT 
+      r.idrecord,
+      r.idappointment,
+      r.iddentist,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname,
+      a.date AS appointmentDate,
+      r.paymentstatus,
+      r.treatment_notes,
+      COALESCE(
+        (
+          SELECT STRING_AGG(s.name, ', ')
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), ''
+      ) AS services,
+      COALESCE(
+        (
+          SELECT SUM(s.price)
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), 0
+      ) AS totalPrice
+    FROM records r
+    LEFT JOIN users d ON r.iddentist = d.idusers
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment
+    WHERE r.idpatient = $1
+    ORDER BY r.idrecord DESC NULLS LAST;
+  `;
+
+  try {
+    const result = await pool.query(query, [patientId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No records found for this patient' });
+    }
+
+    res.status(200).json({ records: result.rows });
+  } catch (err) {
+    console.error('Error fetching patient records:', err.message);
+    res.status(500).json({ message: 'Error fetching patient records', error: err.message });
+  }
+});
+
+app.get('/api/app/dentistrecords/:id', async (req, res) => {
+  const dentistId = req.params.id;
+
+  const query = `
+    SELECT 
+      r.idrecord,
+      r.idappointment,
+      r.idpatient,
+      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,
+      a.date AS appointmentDate,
+      r.paymentstatus,
+      r.treatment_notes,
+      COALESCE(
+        (
+          SELECT STRING_AGG(s.name, ', ')
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), ''
+      ) AS services,
+      COALESCE(
+        (
+          SELECT SUM(s.price)
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), 0
+      ) AS totalPrice
+    FROM records r
+    LEFT JOIN users p ON r.idpatient = p.idusers
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment
+    WHERE r.iddentist = $1
+    ORDER BY r.idrecord DESC NULLS LAST;
+  `;
+
+  try {
+    const result = await pool.query(query, [dentistId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No records found for this dentist' });
+    }
+
+    res.status(200).json({ records: result.rows });
+  } catch (err) {
+    console.error('Error fetching dentist records:', err.message);
+    res.status(500).json({ message: 'Error fetching dentist records', error: err.message });
+  }
+});
 
 app.delete('/api/app/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
