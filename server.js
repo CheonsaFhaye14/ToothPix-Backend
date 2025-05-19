@@ -11,8 +11,19 @@ const app = express();
 const PORT = process.env.APP_API_PORT || 3000;
 
 // CORS configuration
+const allowedOrigins = [
+  process.env.FRONTEND_URL,           // e.g., https://example1.com
+  process.env.SECOND_FRONTEND_URL     // e.g., https://example2.com
+];
+
 const corsOptions = {
-  origin: process.env.FRONTEND_URL,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
 };
 app.use(cors(corsOptions));
@@ -600,7 +611,7 @@ app.post('/api/app/admin/request-reset-password', async (req, res) => {
       
     });
 
-const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/resetpassword#token=${token}`;
+const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword#token=${token}`;
     await transporter.sendMail({
       to: email,
       subject: 'Password Reset Request',
