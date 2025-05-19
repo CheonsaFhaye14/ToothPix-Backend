@@ -816,19 +816,37 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   const idappointment = req.params.id;
   const { idpatient, iddentist, date, status, notes, idservice } = req.body;
 
-  if (!idpatient || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
-    return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice array are required.' });
+  // Basic validations
+  if (!idpatient || !iddentist || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    return res.status(400).json({ message: 'idpatient, iddentist, and idservice array are required.' });
   }
 
   try {
-    // 1. Update the appointment info
+    // 1. Fetch existing appointment date if `date` is not provided
+    let finalDate = date;
+    if (!date) {
+      const existing = await pool.query('SELECT date FROM appointment WHERE idappointment = $1', [idappointment]);
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ message: 'Appointment not found' });
+      }
+      finalDate = existing.rows[0].date;
+    }
+
+    // 2. Update appointment
     const updateAppointmentQuery = `
       UPDATE appointment
       SET idpatient = $1, iddentist = $2, date = $3, status = $4, notes = $5
       WHERE idappointment = $6
       RETURNING idappointment, idpatient, iddentist, date, status, notes
     `;
-    const result = await pool.query(updateAppointmentQuery, [idpatient, iddentist, date, status || 'pending', notes || '', idappointment]);
+    const result = await pool.query(updateAppointmentQuery, [
+      idpatient,
+      iddentist,
+      finalDate,
+      status || 'pending',
+      notes || '',
+      idappointment,
+    ]);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Appointment not found' });
@@ -836,13 +854,12 @@ app.put('/api/app/appointments/:id', async (req, res) => {
 
     const updatedAppointment = result.rows[0];
 
-    // 2. Delete existing services for this appointment
+    // 3. Replace services
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
 
-    // 3. Re-insert the new set of services
-    const insertServicePromises = idservice.map(serviceId => {
-      return pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, serviceId]);
-    });
+    const insertServicePromises = idservice.map(serviceId =>
+      pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, serviceId])
+    );
     await Promise.all(insertServicePromises);
 
     // 4. Respond with success
@@ -856,6 +873,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     res.status(500).json({ message: 'Error updating appointment', error: error.message });
   }
 });
+
 
 
 
