@@ -504,7 +504,7 @@ app.post('/api/app/admin/request-reset-password', async (req, res) => {
       
     });
 
-const resetLink = `http://localhost:3000/ToothPix-website/resetpassword#token=${token}`;
+const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/resetpassword#token=${token}`;
     await transporter.sendMail({
       to: email,
       subject: 'Password Reset Request',
