@@ -559,17 +559,36 @@ app.get('/api/app/dentists', async (req, res) => {
 // Request password reset endpoint
 app.post('/api/request-reset-password', async (req, res) => {
   const { email } = req.body;
-  const token = crypto.randomBytes(20).toString('hex');
-  const expiration = new Date(Date.now() + 3600000); // ✅ correct type: Date object
 
-  const query = 'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE email = $3';
-  const values = [token, expiration, email];
+  if (!email) {
+    return res.status(400).json({ message: 'Email is required' });
+  }
 
   try {
-    const result = await pool.query(query, values);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Email not found' });
+    // Step 1: Check if user exists and if reset token is already active
+    const checkQuery = 'SELECT reset_token, reset_token_expiry FROM users WHERE email = $1';
+    const checkResult = await pool.query(checkQuery, [email]);
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: `No user found with email: ${email}` });
     }
+
+    const user = checkResult.rows[0];
+
+    // Step 2: Prevent duplicate reset if token is still valid
+    if (user.reset_token && user.reset_token_expiry > new Date()) {
+      return res.status(429).json({
+        message: 'A reset link was already sent recently. Please check your email or try again later.',
+        validUntil: user.reset_token_expiry
+      });
+    }
+
+    // Step 3: Generate new token
+    const token = crypto.randomBytes(20).toString('hex');
+    const expiration = new Date(Date.now() + 3600000); // 1 hour
+
+    const updateQuery = 'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE email = $3';
+    await pool.query(updateQuery, [token, expiration, email]);
 
     const transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -579,19 +598,23 @@ app.post('/api/request-reset-password', async (req, res) => {
       },
     });
 
-    // Use query parameter ?token= instead of hash #
     const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword?token=${token}`;
 
-    await transporter.sendMail({
-      to: email,
-      subject: 'Password Reset Request',
-      text: `Click the following link to reset your password: ${resetLink}`,
-    });
+    try {
+      await transporter.sendMail({
+        to: email,
+        subject: 'Password Reset Request',
+        text: `Click the following link to reset your password: ${resetLink}`,
+      });
 
-    res.status(200).json({ message: 'Password reset link sent.' });
+      res.status(200).json({ message: `Password reset link sent to ${email}.` });
+    } catch (emailError) {
+      console.error('Email sending error:', emailError);
+      return res.status(500).json({ message: 'Failed to send email', error: emailError.message });
+    }
   } catch (err) {
-    console.error('Error:', err);
-    res.status(500).json({ message: 'Error sending reset link', error: err.message });
+    console.error('Database error:', err);
+    res.status(500).json({ message: 'Database error occurred', error: err.message });
   }
 });
 
@@ -599,16 +622,20 @@ app.post('/api/request-reset-password', async (req, res) => {
 app.post('/api/reset-password', async (req, res) => {
   const { token, newPassword } = req.body;
 
+  if (!token || !newPassword) {
+    return res.status(400).json({ message: 'Token and new password are required' });
+  }
+
   try {
-    // Use $1 for token, and check expiration with a timestamp comparison
     const userQuery = 'SELECT * FROM users WHERE reset_token = $1 AND reset_token_expiry > NOW()';
     const userResult = await pool.query(userQuery, [token]);
 
     if (userResult.rows.length === 0) {
-      return res.status(400).json({ message: 'Invalid or expired token' });
+      return res.status(400).json({ message: 'Invalid or expired reset token. Please request a new one.' });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
+
     const updateQuery = `
       UPDATE users
       SET password = $1, reset_token = NULL, reset_token_expiry = NULL
@@ -616,12 +643,13 @@ app.post('/api/reset-password', async (req, res) => {
     `;
     await pool.query(updateQuery, [hashedPassword, token]);
 
-    res.status(200).json({ message: 'Password reset successful' });
+    res.status(200).json({ message: 'Password has been successfully reset. You can now log in with your new password.' });
   } catch (err) {
     console.error('Error resetting password:', err);
-    res.status(500).json({ message: 'Error resetting password', error: err.message });
+    res.status(500).json({ message: 'Server error during password reset', error: err.message });
   }
 });
+
 app.post('/api/app/admin', [
   body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
