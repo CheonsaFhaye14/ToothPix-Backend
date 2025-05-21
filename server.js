@@ -560,7 +560,7 @@ app.get('/api/app/dentists', async (req, res) => {
 app.post('/api/request-reset-password', async (req, res) => {
   const { email } = req.body;
   const token = crypto.randomBytes(20).toString('hex');
-  const expiration = new Date(Date.now() + 3600000); // 1 hour from now as JS Date object
+  const expiration = new Date(Date.now() + 3600000); // ✅ correct type: Date object
 
   const query = 'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE email = $3';
   const values = [token, expiration, email];
