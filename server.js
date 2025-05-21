@@ -66,6 +66,53 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+
+// for signing up a new account on the app 
+app.post("/api/app/register", async (req, res) => {
+  const { username, email, password, usertype } = req.body;
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!username || !email || !password || !usertype) {
+    return res.status(400).json({ message: "All fields are required" });
+  }
+
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: "Invalid email format" });
+  }
+
+  try {
+    const existingEmail = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (existingEmail.rows.length > 0) {
+      return res.status(400).json({ message: "Email already registered" });
+    }
+
+    const existingUsername = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
+    if (existingUsername.rows.length > 0) {
+      return res.status(400).json({ message: "Username already taken" });
+    }
+
+    const similarUsernameCheck = await pool.query("SELECT * FROM users WHERE username ILIKE $1", [username]);
+    if (similarUsernameCheck.rows.length > 0) {
+      return res.status(400).json({ message: "Username is too similar to an existing username" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = await pool.query(
+      "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
+      [username, email, hashedPassword, usertype]
+    );
+
+    res.status(201).json({
+      message: "User registered successfully.",
+      user: newUser.rows[0],
+    });
+  } catch (err) {
+    console.error("Error in /register:", err.message);
+    res.status(500).json({ message: "Internal server error", error: err.message });
+  }
+});
 app.post('/api/app/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice } = req.body;
 
@@ -1015,52 +1062,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
 
 
 
-// Register route
-app.post("/register", async (req, res) => {
-  const { username, email, password, usertype } = req.body;
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  if (!username || !email || !password || !usertype) {
-    return res.status(400).json({ message: "All fields are required" });
-  }
-
-  if (!emailRegex.test(email)) {
-    return res.status(400).json({ message: "Invalid email format" });
-  }
-
-  try {
-    const existingEmail = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-    if (existingEmail.rows.length > 0) {
-      return res.status(400).json({ message: "Email already registered" });
-    }
-
-    const existingUsername = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
-    if (existingUsername.rows.length > 0) {
-      return res.status(400).json({ message: "Username already taken" });
-    }
-
-    const similarUsernameCheck = await pool.query("SELECT * FROM users WHERE username ILIKE $1", [username]);
-    if (similarUsernameCheck.rows.length > 0) {
-      return res.status(400).json({ message: "Username is too similar to an existing username" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const newUser = await pool.query(
-      "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
-      [username, email, hashedPassword, usertype]
-    );
-
-    res.status(201).json({
-      message: "User registered successfully.",
-      user: newUser.rows[0],
-    });
-  } catch (err) {
-    console.error("Error in /register:", err.message);
-    res.status(500).json({ message: "Internal server error", error: err.message });
-  }
-});
 // ✅ Get all patients (users with usertype = 'patient')
 app.get('/api/app/patients', async (req, res) => {
   const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'patient'";
