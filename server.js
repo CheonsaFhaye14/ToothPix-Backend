@@ -5,6 +5,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { body, validationResult } = require('express-validator');
 
 const app = express();
