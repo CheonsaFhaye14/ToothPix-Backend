@@ -99,6 +99,8 @@ app.post('/api/app/appointments', async (req, res) => {
     res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
+
+
 app.get('/api/app/patientrecords/:id', async (req, res) => {
   const patientId = req.params.id;
 
@@ -530,36 +532,7 @@ app.get('/api/app/appointments/search', async (req, res) => {
   }
 });
 
-app.post('/api/app/admin/reset-password/:token', async (req, res) => {
-  const { token } = req.params; // Get token from URL parameter
-  const { newPassword } = req.body; // Get new password from request body
-  
-  try {
-    // Step 1: Validate token from the database
-    const result = await pool.query(
-      'SELECT * FROM users WHERE reset_token = $1 AND reset_token_expiry > $2', 
-      [token, Date.now()]
-    );
-    
-    if (result.rowCount === 0) {
-      return res.status(400).json({ message: 'Invalid or expired token.' });
-    }
 
-    // Step 2: Hash the new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10); // Hash password with salt rounds
-
-    // Step 3: Update the password in the database and clear the reset token
-    await pool.query(
-      'UPDATE users SET password = $1, reset_token = NULL, reset_token_expiry = NULL WHERE reset_token = $2',
-      [hashedPassword, token]
-    );
-
-    res.status(200).json({ message: 'Password successfully updated.' });
-  } catch (err) {
-    console.error('Error:', err);
-    res.status(500).json({ message: 'Error resetting password', error: err.message });
-  }
-});
 // ✅ Get all dentists (users with usertype = 'dentist')
 app.get('/api/app/dentists', async (req, res) => {
   const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'dentist'";
@@ -584,32 +557,42 @@ app.get('/api/app/dentists', async (req, res) => {
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
-// API to request password reset (Generate token and send email)
-app.post('/api/app/admin/request-reset-password', async (req, res) => {
+app.post('/api/request-reset-password', async (req, res) => {
   const { email } = req.body;
   const token = crypto.randomBytes(20).toString('hex');
-  const expiration = Date.now() + 3600000; // Token expires in 1 hour
-  
-  // Store the token and expiration time in the database
+  const expiration = Date.now() + 3600000; // 1 hour
+
   const query = 'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE email = $3';
   const values = [token, expiration, email];
 
   try {
     const result = await pool.query(query, values);
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Admin email not found' });
+      return res.status(404).json({ message: 'Email not found' });
     }
 
-    // Step 3: Send the reset link email
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-     auth: {
-  user: process.env.EMAIL_USER,
-  pass: process.env.EMAIL_PASS,
-},
-
-      
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
     });
+
+    const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword#token=${token}`;
+
+    await transporter.sendMail({
+      to: email,
+      subject: 'Password Reset Request',
+      text: `Click the following link to reset your password: ${resetLink}`,
+    });
+
+    res.status(200).json({ message: 'Password reset link sent.' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error sending reset link', error: err.message });
+  }
+});
+
 
 const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword#token=${token}`;
     await transporter.sendMail({
@@ -622,6 +605,32 @@ const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpass
   } catch (err) {
     console.error('Error:', err);
     res.status(500).json({ message: 'Error sending reset link', error: err.message });
+  }
+});
+
+app.post('/api/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  try {
+    const userQuery = 'SELECT * FROM users WHERE reset_token = $1 AND reset_token_expiry > NOW()';
+    const userResult = await pool.query(userQuery, [token]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const updateQuery = `
+      UPDATE users
+      SET password = $1, reset_token = NULL, reset_token_expiry = NULL
+      WHERE reset_token = $2
+    `;
+    await pool.query(updateQuery, [hashedPassword, token]);
+
+    res.status(200).json({ message: 'Password reset successful' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Error resetting password', error: err.message });
   }
 });
 
