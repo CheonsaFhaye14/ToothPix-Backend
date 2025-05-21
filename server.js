@@ -113,6 +113,75 @@ app.post("/api/app/register", async (req, res) => {
     res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
+
+
+
+
+//  for logging in
+app.post('/api/website/login', [
+  body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
+  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  const { username, password } = req.body;
+
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: 'User not found.' });
+    }
+
+    const user = result.rows[0];
+    if (user.usertype !== 'admin') {
+      return res.status(403).json({ message: 'Access denied. Admins only.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Incorrect password' });
+    }
+
+    const token = jwt.sign(
+      { username: user.username, usertype: user.usertype },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    res.status(200).json({
+      message: 'Admin login successful',
+      token: token,
+      user: {
+        username: user.username,
+        usertype: user.usertype,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Error querying database' });
+  }
+});
+
+app.get('/api/admin', async (req, res) => {
+  const query = "SELECT idUsers, email, username FROM users WHERE usertype = 'admin'";
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No admin found' });
+    }
+
+    res.status(200).json({
+      admin: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching admin:', err.message);
+    res.status(500).json({ message: 'Error fetching admin', error: err.message });
+  }
+});
+
 app.post('/api/app/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice } = req.body;
 
@@ -297,24 +366,7 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
 
 
 
-app.get('/api/app/admin', async (req, res) => {
-  const query = "SELECT idUsers, email, username FROM users WHERE usertype = 'admin'";
 
-  try {
-    const result = await pool.query(query);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No admin found' });
-    }
-
-    res.status(200).json({
-      admin: result.rows
-    });
-  } catch (err) {
-    console.error('Error fetching admin:', err.message);
-    res.status(500).json({ message: 'Error fetching admin', error: err.message });
-  }
-});
 
 app.put('/api/app/users/:id', async (req, res) => {
   const userId = req.params.id;
@@ -703,50 +755,7 @@ app.post('/api/reset-password', async (req, res) => {
   }
 });
 
-app.post('/api/app/admin', [
-  body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-  const { username, password } = req.body;
-
-  try {
-    const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-    if (result.rows.length === 0) {
-      return res.status(400).json({ message: 'User not found.' });
-    }
-
-    const user = result.rows[0];
-    if (user.usertype !== 'admin') {
-      return res.status(403).json({ message: 'Access denied. Admins only.' });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Incorrect password' });
-    }
-
-    const token = jwt.sign(
-      { username: user.username, usertype: user.usertype },
-      process.env.JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-
-    res.status(200).json({
-      message: 'Admin login successful',
-      token: token,
-      user: {
-        username: user.username,
-        usertype: user.usertype,
-      },
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Error querying database' });
-  }
-});
 
 app.post('/api/app/records', async (req, res) => {
   const { idpatient, iddentist, idappointment, treatment_notes, paymentstatus } = req.body;
