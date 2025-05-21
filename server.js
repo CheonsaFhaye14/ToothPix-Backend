@@ -554,13 +554,11 @@ app.get('/api/app/dentists', async (req, res) => {
 });
 
 
-const crypto = require('crypto');
-const nodemailer = require('nodemailer');
-
+// Request password reset endpoint
 app.post('/api/request-reset-password', async (req, res) => {
   const { email } = req.body;
   const token = crypto.randomBytes(20).toString('hex');
-  const expiration = Date.now() + 3600000; // 1 hour
+  const expiration = new Date(Date.now() + 3600000); // 1 hour from now as JS Date object
 
   const query = 'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE email = $3';
   const values = [token, expiration, email];
@@ -579,22 +577,9 @@ app.post('/api/request-reset-password', async (req, res) => {
       },
     });
 
-    const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword#token=${token}`;
+    // Use query parameter ?token= instead of hash #
+    const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword?token=${token}`;
 
-    await transporter.sendMail({
-      to: email,
-      subject: 'Password Reset Request',
-      text: `Click the following link to reset your password: ${resetLink}`,
-    });
-
-    res.status(200).json({ message: 'Password reset link sent.' });
-  } catch (err) {
-    res.status(500).json({ message: 'Error sending reset link', error: err.message });
-  }
-});
-
-
-const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword#token=${token}`;
     await transporter.sendMail({
       to: email,
       subject: 'Password Reset Request',
@@ -608,10 +593,12 @@ const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpass
   }
 });
 
+// Reset password endpoint
 app.post('/api/reset-password', async (req, res) => {
   const { token, newPassword } = req.body;
 
   try {
+    // Use $1 for token, and check expiration with a timestamp comparison
     const userQuery = 'SELECT * FROM users WHERE reset_token = $1 AND reset_token_expiry > NOW()';
     const userResult = await pool.query(userQuery, [token]);
 
@@ -629,11 +616,10 @@ app.post('/api/reset-password', async (req, res) => {
 
     res.status(200).json({ message: 'Password reset successful' });
   } catch (err) {
-    console.error(err);
+    console.error('Error resetting password:', err);
     res.status(500).json({ message: 'Error resetting password', error: err.message });
   }
 });
-
 app.post('/api/app/admin', [
   body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
