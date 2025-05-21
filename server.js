@@ -634,6 +634,8 @@ app.post('/api/reset-password', async (req, res) => {
       return res.status(400).json({ message: 'Invalid or expired reset token. Please request a new one.' });
     }
 
+    const user = userResult.rows[0]; // get user info including usertype
+
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     const updateQuery = `
@@ -643,7 +645,11 @@ app.post('/api/reset-password', async (req, res) => {
     `;
     await pool.query(updateQuery, [hashedPassword, token]);
 
-    res.status(200).json({ message: 'Password has been successfully reset. You can now log in with your new password.' });
+    // Return success message + usertype
+    res.status(200).json({ 
+      message: 'Password has been successfully reset. You can now log in with your new password.', 
+      usertype: user.usertype 
+    });
   } catch (err) {
     console.error('Error resetting password:', err);
     res.status(500).json({ message: 'Server error during password reset', error: err.message });
