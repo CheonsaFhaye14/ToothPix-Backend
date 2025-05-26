@@ -218,6 +218,60 @@ app.post('/api/app/appointments', async (req, res) => {
   }
 });
 
+app.post('/api/website/appointments', async (req, res) => {
+  const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
+
+  // Validate required fields
+  if ((!idpatient && !patient_name) || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    return res.status(400).json({
+      message: 'If idpatient is not provided, patient_name is required. Also, iddentist, date, and idservice array are required.'
+    });
+  }
+
+  try {
+    let insertQuery, insertValues;
+
+    if (idpatient) {
+      // For registered users
+      insertQuery = `
+        INSERT INTO appointment (idpatient, iddentist, date, status, notes)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING idappointment, idpatient, iddentist, date, status, notes, NULL AS patient_name
+      `;
+      insertValues = [idpatient, iddentist, date, status || 'pending', notes || ''];
+    } else {
+      // For non-users / walk-ins
+      insertQuery = `
+        INSERT INTO appointment (idpatient, iddentist, date, status, notes, patient_name)
+        VALUES (NULL, $1, $2, $3, $4, $5)
+        RETURNING idappointment, idpatient, iddentist, date, status, notes, patient_name
+      `;
+      insertValues = [iddentist, date, status || 'pending', notes || '', patient_name];
+    }
+
+    const appointmentResult = await pool.query(insertQuery, insertValues);
+    const appointment = appointmentResult.rows[0];
+
+    // Insert appointment_services
+    const serviceInsertPromises = idservice.map(serviceId => {
+      const insertServiceQuery = `
+        INSERT INTO appointment_services (idappointment, idservice)
+        VALUES ($1, $2)
+      `;
+      return pool.query(insertServiceQuery, [appointment.idappointment, serviceId]);
+    });
+    await Promise.all(serviceInsertPromises);
+
+    res.status(201).json({
+      message: 'Appointment created successfully',
+      appointment,
+    });
+
+  } catch (err) {
+    console.error('Error creating appointment:', err.message);
+    res.status(500).json({ message: 'Error creating appointment', error: err.message });
+  }
+});
 
 app.get('/api/app/patientrecords/:id', async (req, res) => {
   const patientId = req.params.id;
