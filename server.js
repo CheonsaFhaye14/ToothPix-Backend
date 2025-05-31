@@ -1062,11 +1062,16 @@ app.delete('/api/app/records/:id', async (req, res) => {
 
 app.put('/api/app/appointments/:id', async (req, res) => {
   const idappointment = req.params.id;
-  const { idpatient, iddentist, date, status, notes, idservice } = req.body;
+  const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
 
-  // Basic validations
-  if (!idpatient || !iddentist || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
-    return res.status(400).json({ message: 'idpatient, iddentist, and idservice array are required.' });
+  // Validate iddentist and idservice array presence
+  if (!iddentist || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    return res.status(400).json({ message: 'iddentist and idservice array are required.' });
+  }
+
+  // Validate either idpatient or patient_name is provided (at least one)
+  if (!idpatient && !patient_name) {
+    return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
   }
 
   try {
@@ -1081,20 +1086,32 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     }
 
     // 2. Update appointment
-    const updateAppointmentQuery = `
-      UPDATE appointment
-      SET idpatient = $1, iddentist = $2, date = $3, status = $4, notes = $5
-      WHERE idappointment = $6
-      RETURNING idappointment, idpatient, iddentist, date, status, notes
-    `;
-    const result = await pool.query(updateAppointmentQuery, [
-      idpatient,
-      iddentist,
-      finalDate,
-      status || 'pending',
-      notes || '',
-      idappointment,
-    ]);
+
+    // Different queries depending on presence of idpatient or patient_name
+    let updateAppointmentQuery;
+    let queryParams;
+
+    if (idpatient) {
+      // Registered patient update (patient_name set to NULL)
+      updateAppointmentQuery = `
+        UPDATE appointment
+        SET idpatient = $1, iddentist = $2, date = $3, status = $4, notes = $5, patient_name = NULL
+        WHERE idappointment = $6
+        RETURNING idappointment, idpatient, iddentist, date, status, notes, patient_name
+      `;
+      queryParams = [idpatient, iddentist, finalDate, status || 'pending', notes || '', idappointment];
+    } else {
+      // Walk-in update (idpatient set to NULL)
+      updateAppointmentQuery = `
+        UPDATE appointment
+        SET idpatient = NULL, iddentist = $1, date = $2, status = $3, notes = $4, patient_name = $5
+        WHERE idappointment = $6
+        RETURNING idappointment, idpatient, iddentist, date, status, notes, patient_name
+      `;
+      queryParams = [iddentist, finalDate, status || 'pending', notes || '', patient_name, idappointment];
+    }
+
+    const result = await pool.query(updateAppointmentQuery, queryParams);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Appointment not found' });
@@ -1102,7 +1119,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
 
     const updatedAppointment = result.rows[0];
 
-    // 3. Replace services
+    // 3. Replace appointment services
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
 
     const insertServicePromises = idservice.map(serviceId =>
