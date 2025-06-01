@@ -287,12 +287,12 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
       r.treatment_notes,
       COALESCE(
         (
-          SELECT STRING_AGG(s.name, ', ')
+          SELECT STRING_AGG(s.name || ' ' || s.price,  ', ' )  -- Concatenate service name and price
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), ''
-      ) AS services,
+      ) AS servicesWithPrices,
       COALESCE(
         (
           SELECT SUM(s.price)
@@ -300,7 +300,16 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), 0
-      ) AS totalPrice
+      ) AS totalPrice,
+      COALESCE(r.total_paid, 0) AS totalPaid,
+      (COALESCE(
+        (
+          SELECT SUM(s.price)
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), 0
+      ) - COALESCE(r.total_paid, 0)) AS stillOwe  -- Calculate the remaining balance
     FROM records r
     LEFT JOIN users d ON r.iddentist = d.idusers
     LEFT JOIN appointment a ON r.idappointment = a.idappointment
@@ -321,6 +330,7 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
     res.status(500).json({ message: 'Error fetching patient records', error: err.message });
   }
 });
+
 
 app.get('/api/app/dentistrecords/:id', async (req, res) => {
   const dentistId = req.params.id;
