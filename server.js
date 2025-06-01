@@ -446,42 +446,42 @@ ORDER BY ai.date ASC;
 });
 
 
-app.get('/api/website/payment', async (req, res) => {
-  const query = `
-    SELECT 
-      a.idappointment,
-      a.date,
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
-      r.paymentstatus,
-      SUM(s.price) AS total_price,
-      r.total_paid,
-      (SUM(s.price) - r.total_paid) AS still_owe
-    FROM appointment a
-    JOIN users p ON a.idpatient = p.idusers
-    JOIN users d ON a.iddentist = d.idusers
-    JOIN appointment_services aps ON a.idappointment = aps.idappointment
-    JOIN service s ON aps.idservice = s.idservice
-    JOIN records r ON r.idappointment = a.idappointment
-    GROUP BY a.idappointment, a.date, dentist_name, patient_name, r.paymentstatus, r.total_paid
-    ORDER BY a.date DESC;
-  `;
+// app.get('/api/website/payment', async (req, res) => {
+//   const query = `
+//     SELECT 
+//       a.idappointment,
+//       a.date,
+//       CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+//       CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+//       r.paymentstatus,
+//       SUM(s.price) AS total_price,
+//       r.total_paid,
+//       (SUM(s.price) - r.total_paid) AS still_owe
+//     FROM appointment a
+//     JOIN users p ON a.idpatient = p.idusers
+//     JOIN users d ON a.iddentist = d.idusers
+//     JOIN appointment_services aps ON a.idappointment = aps.idappointment
+//     JOIN service s ON aps.idservice = s.idservice
+//     JOIN records r ON r.idappointment = a.idappointment
+//     GROUP BY a.idappointment, a.date, dentist_name, patient_name, r.paymentstatus, r.total_paid
+//     ORDER BY a.date DESC;
+//   `;
 
-  try {
-    const result = await pool.query(query);
+//   try {
+//     const result = await pool.query(query);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No payment records found' });
-    }
+//     if (result.rows.length === 0) {
+//       return res.status(404).json({ message: 'No payment records found' });
+//     }
 
-    res.status(200).json({
-      payments: result.rows
-    });
-  } catch (err) {
-    console.error('Error fetching payments:', err.message);
-    res.status(500).json({ message: 'Error fetching payments', error: err.message });
-  }
-});
+//     res.status(200).json({
+//       payments: result.rows
+//     });
+//   } catch (err) {
+//     console.error('Error fetching payments:', err.message);
+//     res.status(500).json({ message: 'Error fetching payments', error: err.message });
+//   }
+// });
 
 
 app.get('/appointment-services/:idappointment', async (req, res) => {
