@@ -332,7 +332,7 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
 });
 
 
-app.get('/api/app/dentistrecords/:id', async (req, res) => {
+app.get('/api/app/dentistrecords/:id', async (req, res) => { 
   const dentistId = req.params.id;
 
   const query = `
@@ -340,18 +340,19 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
       r.idrecord,
       r.idappointment,
       r.idpatient,
-      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,
-      a.date AS appointmentDate,
-      r.paymentstatus,
-      r.treatment_notes,
+      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,  -- Patient's full name
+      a.patient_name AS patientName,  -- Fallback to patient_name from appointment (optional)
+      a.date AS appointmentDate,  -- Appointment date
+      r.paymentstatus,  -- Payment status
+      r.treatment_notes,  -- Treatment notes
       COALESCE(
         (
-          SELECT STRING_AGG(s.name, ', ')
+          SELECT STRING_AGG(s.name || ' ' || s.price, ', ')  -- Concatenate service name and price
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), ''
-      ) AS services,
+      ) AS servicesWithPrices,  -- List of services with their respective prices
       COALESCE(
         (
           SELECT SUM(s.price)
@@ -359,11 +360,20 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), 0
-      ) AS totalPrice
+      ) AS totalPrice,  -- Total price of all services in this appointment
+      COALESCE(r.total_paid, 0) AS totalPaid,  -- Total amount paid by the patient
+      (COALESCE(
+        (
+          SELECT SUM(s.price)
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), 0
+      ) - COALESCE(r.total_paid, 0)) AS stillOwe  -- Calculate the remaining balance
     FROM records r
-    LEFT JOIN users p ON r.idpatient = p.idusers
-    LEFT JOIN appointment a ON r.idappointment = a.idappointment
-    WHERE r.iddentist = $1
+    LEFT JOIN users p ON r.idpatient = p.idusers  -- Join with patient table
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment  -- Join with appointment table
+    WHERE r.iddentist = $1  -- Dentist ID (parameterized query)
     ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
@@ -380,6 +390,7 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
     res.status(500).json({ message: 'Error fetching dentist records', error: err.message });
   }
 });
+
 
 app.post('/api/website/record', async (req, res) => {
   const { idpatient, patient_name, iddentist, date, services, treatment_notes } = req.body;
