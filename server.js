@@ -371,6 +371,94 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
   }
 });
 
+app.put('/api/website/record/:idappointment', async (req, res) => {
+  const { idappointment } = req.params;
+  const { iddentist, date, services, treatment_notes } = req.body;
+
+  // Basic validation
+  if (!iddentist || !date || !Array.isArray(services)) {
+    return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
+  }
+
+  try {
+    await pool.query('BEGIN');
+
+    // Update dentist and date in appointment
+    const updateAppointmentQuery = `
+      UPDATE appointment
+      SET iddentist = $1, date = $2
+      WHERE idappointment = $3
+      RETURNING *;
+    `;
+    const updateResult = await pool.query(updateAppointmentQuery, [iddentist, date, idappointment]);
+
+    if (updateResult.rowCount === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ message: 'Appointment not found.' });
+    }
+
+    // Delete old services for this appointment
+    await pool.query(
+      `DELETE FROM appointment_services WHERE idappointment = $1;`,
+      [idappointment]
+    );
+
+    // Insert new services
+    const insertServicesPromises = services.map((idservice) => {
+      return pool.query(
+        `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2);`,
+        [idappointment, idservice]
+      );
+    });
+    await Promise.all(insertServicesPromises);
+
+    // Update or Insert treatment notes in records table
+    if (treatment_notes !== undefined) {
+      // Check if a record exists for this appointment
+      const recordCheck = await pool.query(
+        `SELECT idrecord FROM records WHERE idappointment = $1`,
+        [idappointment]
+      );
+
+      if (recordCheck.rowCount > 0) {
+        // Update existing record
+        await pool.query(
+          `UPDATE records SET treatment_notes = $1 WHERE idappointment = $2`,
+          [treatment_notes, idappointment]
+        );
+      } else {
+        // Insert new record (set patient and dentist ids from appointment)
+        // Get patient and dentist ids from appointment table
+        const apptRes = await pool.query(
+          `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
+          [idappointment]
+        );
+
+        if (apptRes.rowCount === 0) {
+          await pool.query('ROLLBACK');
+          return res.status(404).json({ message: 'Appointment not found when creating record.' });
+        }
+
+        const { idpatient, iddentist: dentistIdFromAppt } = apptRes.rows[0];
+
+        await pool.query(
+          `INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes)
+           VALUES ($1, $2, $3, $4)`,
+          [idpatient, dentistIdFromAppt, idappointment, treatment_notes]
+        );
+      }
+    }
+
+    await pool.query('COMMIT');
+
+    res.status(200).json({ message: 'Appointment updated successfully.' });
+  } catch (err) {
+    await pool.query('ROLLBACK');
+    console.error('Error updating appointment:', err.message);
+    res.status(500).json({ message: 'Failed to update appointment', error: err.message });
+  }
+});
+
 app.delete('/api/app/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
 
