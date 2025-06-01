@@ -398,23 +398,35 @@ app.delete('/api/app/appointments/:id', async (req, res) => {
 
 app.get('/api/website/record', async (req, res) => {
   const query = `
-SELECT 
-  a.idappointment,
-  a.date,
-  COALESCE(CONCAT(p.firstname, ' ', p.lastname), a.patient_name) AS patient_name,
-  CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+WITH appointment_info AS (
+  SELECT
+    a.idappointment,
+    a.date,
+    COALESCE(NULLIF(CONCAT(p.firstname, ' ', p.lastname), ' '), a.patient_name) AS patient_name,
+    CONCAT(d.firstname, ' ', d.lastname) AS dentist_name
+  FROM appointment a
+  LEFT JOIN users p ON a.idpatient = p.idusers
+  JOIN users d ON a.iddentist = d.idusers
+)
+SELECT
+  ai.idappointment,
+  ai.date,
+  ai.patient_name,
+  ai.dentist_name,
   STRING_AGG(s.name, ', ') AS services,
   SUM(s.price) AS total_price,
   r.treatment_notes
-FROM appointment a
-LEFT JOIN users p ON a.idpatient = p.idusers         -- LEFT JOIN to include walk-ins
-JOIN users d ON a.iddentist = d.idusers               -- Dentist should always exist
-JOIN appointment_services aps ON a.idappointment = aps.idappointment
+FROM appointment_info ai
+JOIN appointment_services aps ON ai.idappointment = aps.idappointment
 JOIN service s ON aps.idservice = s.idservice
-LEFT JOIN records r ON r.idappointment = a.idappointment
-WHERE a.date < NOW()
-GROUP BY a.idappointment, a.date, patient_name, dentist_name, r.treatment_notes, a.patient_name
-ORDER BY a.date DESC;
+LEFT JOIN records r ON r.idappointment = ai.idappointment
+GROUP BY
+  ai.idappointment,
+  ai.date,
+  ai.patient_name,
+  ai.dentist_name,
+  r.treatment_notes
+ORDER BY ai.date ASC;
   `;
 
   try {
@@ -432,6 +444,7 @@ ORDER BY a.date DESC;
     res.status(500).json({ message: 'Error fetching records', error: err.message });
   }
 });
+
 
 app.get('/api/website/payment', async (req, res) => {
   const query = `
