@@ -699,6 +699,56 @@ app.get('/api/website/payment', async (req, res) => {
   }
 });
 
+app.put('/api/website/payment/:id', async (req, res) => {
+  const { id } = req.params;
+  const { total_paid, total_price } = req.body;
+
+  if (isNaN(total_paid) || total_paid < 0) {
+    return res.status(400).json({ message: 'Invalid total_paid amount' });
+  }
+
+  if (isNaN(total_price) || total_price <= 0) {
+    return res.status(400).json({ message: 'Invalid total_price amount' });
+  }
+
+  // ✅ Updated logic for payment status
+  let paymentstatus;
+  if (parseFloat(total_paid) === 0) {
+    paymentstatus = 'unpaid';
+  } else if (parseFloat(total_paid) < parseFloat(total_price)) {
+    paymentstatus = 'partial';
+  } else {
+    paymentstatus = 'paid';
+  }
+
+  const client = await pool.connect();
+
+  try {
+    const updateQuery = `
+      UPDATE records
+      SET total_paid = $1,
+          paymentstatus = $2
+      WHERE idappointment = $3
+      RETURNING *;
+    `;
+
+    const result = await client.query(updateQuery, [total_paid, paymentstatus, id]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Appointment not found or not eligible for update' });
+    }
+
+    res.status(200).json({
+      message: 'Payment updated successfully',
+      updatedRecord: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Error updating payment:', err.message);
+    res.status(500).json({ message: 'Failed to update payment', error: err.message });
+  } finally {
+    client.release();
+  }
+});
 
 app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
