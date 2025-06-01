@@ -375,7 +375,6 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
   const { iddentist, date, services, treatment_notes } = req.body;
 
-  // Basic validation
   if (!iddentist || !date || !Array.isArray(services)) {
     return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
   }
@@ -383,7 +382,7 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
   try {
     await pool.query('BEGIN');
 
-    // Update dentist and date in appointment
+    // Update dentist and date
     const updateAppointmentQuery = `
       UPDATE appointment
       SET iddentist = $1, date = $2
@@ -397,48 +396,55 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found.' });
     }
 
-    // Delete old services for this appointment
-    await pool.query(
-      `DELETE FROM appointment_services WHERE idappointment = $1;`,
+    // Get current services for this appointment
+    const currentServicesResult = await pool.query(
+      `SELECT idservice FROM appointment_services WHERE idappointment = $1`,
       [idappointment]
     );
+    const currentServiceIds = currentServicesResult.rows.map(row => row.idservice);
 
-    // Insert new services
-    const insertServicesPromises = services.map((idservice) => {
-      return pool.query(
-        `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2);`,
+    const newServiceIds = [...new Set(services)];
+
+    const servicesToAdd = newServiceIds.filter(id => !currentServiceIds.includes(id));
+    const servicesToRemove = currentServiceIds.filter(id => !newServiceIds.includes(id));
+
+    // Delete removed services
+    for (const idservice of servicesToRemove) {
+      await pool.query(
+        `DELETE FROM appointment_services WHERE idappointment = $1 AND idservice = $2`,
         [idappointment, idservice]
       );
-    });
-    await Promise.all(insertServicesPromises);
+    }
 
-    // Update or Insert treatment notes in records table
+    // Insert new services
+    for (const idservice of servicesToAdd) {
+      await pool.query(
+        `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`,
+        [idappointment, idservice]
+      );
+    }
+
+    // Update or insert treatment notes
     if (treatment_notes !== undefined) {
-      // Check if a record exists for this appointment
       const recordCheck = await pool.query(
         `SELECT idrecord FROM records WHERE idappointment = $1`,
         [idappointment]
       );
 
       if (recordCheck.rowCount > 0) {
-        // Update existing record
         await pool.query(
           `UPDATE records SET treatment_notes = $1 WHERE idappointment = $2`,
           [treatment_notes, idappointment]
         );
       } else {
-        // Insert new record (set patient and dentist ids from appointment)
-        // Get patient and dentist ids from appointment table
         const apptRes = await pool.query(
           `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
           [idappointment]
         );
-
         if (apptRes.rowCount === 0) {
           await pool.query('ROLLBACK');
           return res.status(404).json({ message: 'Appointment not found when creating record.' });
         }
-
         const { idpatient, iddentist: dentistIdFromAppt } = apptRes.rows[0];
 
         await pool.query(
@@ -450,7 +456,6 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
     }
 
     await pool.query('COMMIT');
-
     res.status(200).json({ message: 'Appointment updated successfully.' });
   } catch (err) {
     await pool.query('ROLLBACK');
@@ -458,6 +463,7 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
     res.status(500).json({ message: 'Failed to update appointment', error: err.message });
   }
 });
+
 
 app.delete('/api/app/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
