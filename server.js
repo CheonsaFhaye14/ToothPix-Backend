@@ -464,6 +464,28 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
   }
 });
 
+app.delete('/api/website/record/:id', async (req, res) => {
+  const id = req.params.id;
+
+  try {
+    // Delete the appointment record from your tables
+    // Note: you might need to delete from related tables (like appointment_services or records) based on your DB schema
+    // Here, let's assume you want to delete from appointment table, which cascades to related tables or handle manually
+
+    // For example, if you have FK with cascade delete, this will work:
+    const deleteQuery = `DELETE FROM appointment WHERE idappointment = $1`;
+    const result = await pool.query(deleteQuery, [id]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+
+    res.status(200).json({ message: 'Appointment deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting appointment:', error.message);
+    res.status(500).json({ message: 'Error deleting appointment', error: error.message });
+  }
+});
 
 app.delete('/api/app/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
