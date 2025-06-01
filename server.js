@@ -1632,7 +1632,8 @@ app.get('/api/app/appointments', async (req, res) => {
     WHERE date < NOW() AT TIME ZONE 'Asia/Manila';
   `;
 
-  const fetchQuery = 'SELECT * FROM appointment';
+  // Modify the fetchQuery to include sorting by date (or any other field)
+  const fetchQuery = 'SELECT * FROM appointment ORDER BY date ASC';  // ASC for ascending, DESC for descending
 
   const client = await pool.connect();
 
@@ -1642,7 +1643,7 @@ app.get('/api/app/appointments', async (req, res) => {
     // Update the status of past appointments
     await client.query(updateQuery);
 
-    // Fetch all appointments
+    // Fetch all appointments, now sorted by date
     const result = await client.query(fetchQuery);
 
     await client.query('COMMIT'); // Commit the transaction
@@ -1651,6 +1652,7 @@ app.get('/api/app/appointments', async (req, res) => {
       return res.status(404).json({ message: 'No appointments found' });
     }
 
+    // Send the sorted appointments back in the response
     res.status(200).json({
       appointments: result.rows
     });
