@@ -371,6 +371,76 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
   }
 });
 
+app.post('/api/website/record', async (req, res) => {
+  const { idpatient, patient_name, iddentist, date, services, treatment_notes } = req.body;
+
+  if (!iddentist || !date || !Array.isArray(services) || services.length === 0) {
+    return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
+  }
+
+  if (!idpatient && !patient_name) {
+    return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
+  }
+
+  try {
+    await pool.query('BEGIN');
+
+    // 1. Insert appointment
+    let insertAppointmentQuery, insertParams;
+
+    if (idpatient) {
+      insertAppointmentQuery = `
+        INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name)
+        VALUES ($1, $2, $3, $4, NULL)
+        RETURNING idappointment
+      `;
+      insertParams = [idpatient, iddentist, date, ''];
+    } else {
+      insertAppointmentQuery = `
+        INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name)
+        VALUES (NULL, $1, $2, $3, $4)
+        RETURNING idappointment
+      `;
+      insertParams = [iddentist, date, '', patient_name];
+    }
+
+    const apptResult = await pool.query(insertAppointmentQuery, insertParams);
+    const idappointment = apptResult.rows[0].idappointment;
+
+    // 2. Insert appointment services
+    for (const idservice of services) {
+      await pool.query(
+        `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`,
+        [idappointment, idservice]
+      );
+    }
+
+    // 3. Insert record if treatment_notes provided
+    if (treatment_notes !== undefined && treatment_notes.trim() !== '') {
+      const apptDetails = await pool.query(
+        `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
+        [idappointment]
+      );
+
+      const { idpatient: patientIdFromAppt, iddentist: dentistIdFromAppt } = apptDetails.rows[0];
+
+      await pool.query(
+        `INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes)
+         VALUES ($1, $2, $3, $4)`,
+        [patientIdFromAppt, dentistIdFromAppt, idappointment, treatment_notes]
+      );
+    }
+
+    await pool.query('COMMIT');
+    res.status(201).json({ message: 'Appointment and record created successfully.', idappointment });
+
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error creating appointment and record:', error.message);
+    res.status(500).json({ message: 'Failed to create appointment and record.', error: error.message });
+  }
+});
+
 app.put('/api/website/record/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
   const { iddentist, date, services, treatment_notes } = req.body;
