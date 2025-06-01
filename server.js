@@ -632,42 +632,72 @@ ORDER BY ai.date ASC;
 });
 
 
-// app.get('/api/website/payment', async (req, res) => {
-//   const query = `
-//     SELECT 
-//       a.idappointment,
-//       a.date,
-//       CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-//       CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
-//       r.paymentstatus,
-//       SUM(s.price) AS total_price,
-//       r.total_paid,
-//       (SUM(s.price) - r.total_paid) AS still_owe
-//     FROM appointment a
-//     JOIN users p ON a.idpatient = p.idusers
-//     JOIN users d ON a.iddentist = d.idusers
-//     JOIN appointment_services aps ON a.idappointment = aps.idappointment
-//     JOIN service s ON aps.idservice = s.idservice
-//     JOIN records r ON r.idappointment = a.idappointment
-//     GROUP BY a.idappointment, a.date, dentist_name, patient_name, r.paymentstatus, r.total_paid
-//     ORDER BY a.date DESC;
-//   `;
+app.get('/api/website/payment', async (req, res) => {
+  const client = await pool.connect();
 
-//   try {
-//     const result = await pool.query(query);
+  try {
+    await client.query('BEGIN');
 
-//     if (result.rows.length === 0) {
-//       return res.status(404).json({ message: 'No payment records found' });
-//     }
+    // STEP 1: Insert missing records for past appointments
+    const insertMissingRecordsQuery = `
+      INSERT INTO records (idpatient, iddentist, idappointment)
+      SELECT a.idpatient, a.iddentist, a.idappointment
+      FROM appointment a
+      LEFT JOIN records r ON r.idappointment = a.idappointment
+      WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
+        AND r.idappointment IS NULL;
+    `;
+    await client.query(insertMissingRecordsQuery);
 
-//     res.status(200).json({
-//       payments: result.rows
-//     });
-//   } catch (err) {
-//     console.error('Error fetching payments:', err.message);
-//     res.status(500).json({ message: 'Error fetching payments', error: err.message });
-//   }
-// });
+    // STEP 2: Fetch payment-related appointment data
+    const paymentQuery = `
+      SELECT
+        a.idappointment,
+        a.date,
+        CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+        COALESCE(NULLIF(CONCAT(p.firstname, ' ', p.lastname), ' '), a.patient_name) AS patient_name,
+        STRING_AGG(s.name || ' ' || s.price, ', ') AS services_with_prices,
+        SUM(s.price) AS total_price,
+        r.paymentstatus,
+        r.total_paid,
+        (SUM(s.price) - r.total_paid) AS still_owe
+      FROM appointment a
+      LEFT JOIN users p ON a.idpatient = p.idusers
+      JOIN users d ON a.iddentist = d.idusers
+      JOIN appointment_services aps ON a.idappointment = aps.idappointment
+      JOIN service s ON aps.idservice = s.idservice
+      JOIN records r ON r.idappointment = a.idappointment
+      WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
+      GROUP BY 
+        a.idappointment, 
+        a.date, 
+        CONCAT(d.firstname, ' ', d.lastname),
+        COALESCE(NULLIF(CONCAT(p.firstname, ' ', p.lastname), ' '), a.patient_name),
+        r.paymentstatus, 
+        r.total_paid
+      ORDER BY a.date DESC;
+    `;
+
+    const result = await client.query(paymentQuery);
+
+    await client.query('COMMIT');
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No payment records found' });
+    }
+
+    res.status(200).json({
+      payments: result.rows
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error in payment API:', err.message);
+    res.status(500).json({ message: 'Error fetching payments', error: err.message });
+  } finally {
+    client.release();
+  }
+});
 
 
 app.get('/appointment-services/:idappointment', async (req, res) => {
