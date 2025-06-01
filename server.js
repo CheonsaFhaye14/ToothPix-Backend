@@ -1545,13 +1545,28 @@ app.get('/api/app/patients', async (req, res) => {
 //   }
 // });
 
-// Get all appointments route
 app.get('/api/app/appointments', async (req, res) => {
-  const query = 'SELECT * FROM appointment';
+  const updateQuery = `
+    UPDATE appointment
+    SET status = 'completed'
+    WHERE date < NOW() AT TIME ZONE 'Asia/Manila';
+  `;
+
+  const fetchQuery = 'SELECT * FROM appointment';
+
+  const client = await pool.connect();
 
   try {
-    const result = await pool.query(query);
-    
+    await client.query('BEGIN'); // Start a transaction
+
+    // Update the status of past appointments
+    await client.query(updateQuery);
+
+    // Fetch all appointments
+    const result = await client.query(fetchQuery);
+
+    await client.query('COMMIT'); // Commit the transaction
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No appointments found' });
     }
@@ -1560,10 +1575,14 @@ app.get('/api/app/appointments', async (req, res) => {
       appointments: result.rows
     });
   } catch (err) {
+    await client.query('ROLLBACK'); // Rollback in case of error
     console.error('Error fetching appointments:', err.message);
     res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+  } finally {
+    client.release(); // Release the client back to the pool
   }
 });
+
 
 
 // Login route
