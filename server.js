@@ -1688,7 +1688,9 @@ app.get('/api/app/appointments', async (req, res) => {
 
 
 
-// Login route
+// In-memory refresh token store (for demo; move to DB for production)
+let refreshTokensStore = [];
+
 app.post('/api/app/login', [
   body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
@@ -1711,15 +1713,23 @@ app.post('/api/app/login', [
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
-    const token = jwt.sign(
+    // Generate access token
+    const accessToken = jwt.sign(
       { userId: user.idusers, username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
 
+    // Generate refresh token (random string)
+    const refreshToken = crypto.randomBytes(64).toString('hex');
+
+    // Store refresh token associated with user id
+    refreshTokensStore.push({ token: refreshToken, userId: user.idusers });
+
     res.status(200).json({
       message: 'Login successful',
-      token: token,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
       user: {
         id: user.idusers,
         username: user.username,
@@ -1731,6 +1741,34 @@ app.post('/api/app/login', [
     res.status(500).json({ message: 'Error querying database' });
   }
 });
+
+app.post('/api/app/refresh-token', (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) return res.status(401).json({ message: 'Refresh token required' });
+
+  const storedToken = refreshTokensStore.find(rt => rt.token === refreshToken);
+
+  if (!storedToken) return res.status(403).json({ message: 'Invalid refresh token' });
+
+  // Generate new access token for the user
+  const newAccessToken = jwt.sign(
+    { userId: storedToken.userId }, 
+    process.env.JWT_SECRET,
+    { expiresIn: '1h' }
+  );
+
+  res.status(200).json({ accessToken: newAccessToken });
+});
+app.post('/api/app/logout', (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) return res.status(400).json({ message: 'Refresh token required' });
+
+  refreshTokensStore = refreshTokensStore.filter(rt => rt.token !== refreshToken);
+
+  res.status(200).json({ message: 'Logged out successfully' });
+});
+
 
 // Get profile route
 app.get('/api/app/profile', authenticateToken, async (req, res) => {
