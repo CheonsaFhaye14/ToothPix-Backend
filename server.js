@@ -8,7 +8,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { body, validationResult } = require('express-validator');
-
+const cron = require('node-cron');
 const app = express();
 const PORT = process.env.APP_API_PORT || 3000;
 
@@ -370,6 +370,21 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
   } catch (err) {
     console.error('Error fetching patient records:', err.message);
     res.status(500).json({ message: 'Error fetching patient records', error: err.message });
+  }
+});
+
+
+cron.schedule('*/5 * * * *', async () => { // every 5 minutes
+  try {
+    await pool.query(`
+      UPDATE appointment
+      SET status = 'completed'
+      WHERE date < NOW() AT TIME ZONE 'Asia/Manila'
+        AND status NOT IN ('cancelled', 'completed')
+    `);
+    console.log('Appointment statuses updated.');
+  } catch (err) {
+    console.error('Scheduled update failed:', err.message);
   }
 });
 
