@@ -272,6 +272,38 @@ app.post('/api/website/appointments', async (req, res) => {
     res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
+app.get('/api/website/report/patient/:id', async (req, res) => {
+  const patientId = req.params.id;
+
+  try {
+    const query = `
+      SELECT 
+        CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+        a.date AS appointment_date,
+        STRING_AGG(s.name, ', ') AS services,
+        r.treatment_notes,
+        CONCAT(d.firstname, ' ', d.lastname) AS doctor_name,
+        r.total_paid
+      FROM appointment a
+      JOIN users p ON a.idpatient = p.idusers
+      JOIN users d ON a.iddentist = d.idusers
+      LEFT JOIN records r ON r.idappointment = a.idappointment
+      LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
+      LEFT JOIN service s ON aps.idservice = s.idservice
+      WHERE p.idusers = $1
+      GROUP BY 
+        a.idappointment, p.firstname, p.lastname, d.firstname, d.lastname, r.treatment_notes, r.total_paid, a.date
+      ORDER BY a.date DESC;
+    `;
+
+    const result = await pool.query(query, [patientId]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching patient appointment data:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 app.get('/api/app/patientrecords/:id', async (req, res) => {
   const patientId = req.params.id;
@@ -1648,9 +1680,10 @@ app.get('/api/app/patients', async (req, res) => {
 
 app.get('/api/app/appointments', async (req, res) => {
   const updateQuery = `
-    UPDATE appointment
-    SET status = 'completed'
-    WHERE date < NOW() AT TIME ZONE 'Asia/Manila';
+   UPDATE appointment
+SET status = 'completed'
+WHERE date < NOW() AT TIME ZONE 'Asia/Manila'
+  AND status != 'cancelled';
   `;
 
   // Modify the fetchQuery to include sorting by date and then by idappointment
