@@ -146,7 +146,7 @@ app.post('/api/website/login', [
     const token = jwt.sign(
       { username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
 
     res.status(200).json({
@@ -1759,7 +1759,7 @@ app.post('/api/app/login', [
     const accessToken = jwt.sign(
       { userId: user.idusers, username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
 
     // Generate refresh token (random string)
@@ -1797,7 +1797,7 @@ app.post('/api/app/refresh-token', (req, res) => {
   const newAccessToken = jwt.sign(
     { userId: storedToken.userId }, 
     process.env.JWT_SECRET,
-    { expiresIn: '1h' }
+    { expiresIn: '24h' }
   );
 
   res.status(200).json({ accessToken: newAccessToken });
