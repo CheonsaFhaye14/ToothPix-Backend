@@ -276,25 +276,32 @@ app.get('/api/website/report/patients', async (req, res) => {
   try {
     const query = `
       SELECT  
-        p.idusers AS patient_id,
+        p.idusers             AS patient_id,
         CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
         p.birthdate,
         p.gender,
-        a.date AS appointment_date,
-        STRING_AGG(DISTINCT s.name, ', ') AS services,
+        a.date                AS appointment_date,
+        STRING_AGG(DISTINCT s.name, ', ')    AS services,
         r.treatment_notes,
         CONCAT(d.firstname, ' ', d.lastname) AS doctor_name,
-        r.total_paid
+        SUM(s.price)         AS total_amount
       FROM users p
-      LEFT JOIN appointment a ON a.idpatient = p.idusers
-      LEFT JOIN users d ON a.iddentist = d.idusers
-      LEFT JOIN records r ON r.idappointment = a.idappointment
-      LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
-      LEFT JOIN service s ON aps.idservice = s.idservice
+      LEFT JOIN appointment a 
+        ON a.idpatient = p.idusers
+        AND a.status = 'completed'        -- only “completed” appointments
+      LEFT JOIN users d 
+        ON a.iddentist = d.idusers
+      LEFT JOIN records r 
+        ON r.idappointment = a.idappointment
+      LEFT JOIN appointment_services aps 
+        ON aps.idappointment = a.idappointment
+      LEFT JOIN service s 
+        ON aps.idservice = s.idservice
       WHERE p.usertype = 'patient'
+        AND a.idappointment IS NOT NULL    -- exclude rows where no completed appointment exists
       GROUP BY 
         p.idusers, p.firstname, p.lastname, p.birthdate, p.gender,
-        a.idappointment, a.date, d.firstname, d.lastname, r.treatment_notes, r.total_paid
+        a.idappointment, a.date, d.firstname, d.lastname, r.treatment_notes
       ORDER BY patient_name ASC, appointment_date ASC;
     `;
 
@@ -305,6 +312,7 @@ app.get('/api/website/report/patients', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 
 app.get('/api/app/patientrecords/:id', async (req, res) => {
