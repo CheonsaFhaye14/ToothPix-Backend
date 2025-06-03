@@ -433,7 +433,6 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
   }
 });
 
-
 app.post('/api/website/record', async (req, res) => {
   const { idpatient, patient_name, iddentist, date, services, treatment_notes } = req.body;
 
@@ -448,20 +447,20 @@ app.post('/api/website/record', async (req, res) => {
   try {
     await pool.query('BEGIN');
 
-    // 1. Insert appointment
+    // 1. Insert appointment with status = 'completed'
     let insertAppointmentQuery, insertParams;
 
     if (idpatient) {
       insertAppointmentQuery = `
-        INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name)
-        VALUES ($1, $2, $3, $4, NULL)
+        INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name, status)
+        VALUES ($1, $2, $3, $4, NULL, 'completed')
         RETURNING idappointment
       `;
       insertParams = [idpatient, iddentist, date, ''];
     } else {
       insertAppointmentQuery = `
-        INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name)
-        VALUES (NULL, $1, $2, $3, $4)
+        INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name, status)
+        VALUES (NULL, $1, $2, $3, $4, 'completed')
         RETURNING idappointment
       `;
       insertParams = [iddentist, date, '', patient_name];
