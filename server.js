@@ -67,13 +67,12 @@ const authenticateToken = (req, res, next) => {
 };
 
 
-// for signing up a new account on the app 
 app.post("/api/app/register", async (req, res) => {
-  const { username, email, password, usertype } = req.body;
+  const { username, email, password, usertype, firstname, lastname } = req.body;
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  if (!username || !email || !password || !usertype) {
+  if (!username || !email || !password || !usertype || !firstname || !lastname) {
     return res.status(400).json({ message: "All fields are required" });
   }
 
@@ -100,8 +99,9 @@ app.post("/api/app/register", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = await pool.query(
-      "INSERT INTO users (username, email, password, usertype) VALUES ($1, $2, $3, $4) RETURNING *",
-      [username, email, hashedPassword, usertype]
+      `INSERT INTO users (username, email, password, usertype, firstname, lastname)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [username, email, hashedPassword, usertype, firstname, lastname]
     );
 
     res.status(201).json({
