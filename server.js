@@ -64,78 +64,78 @@ const authenticateToken = (req, res, next) => {
   } catch (err) {
     return res.status(401).json({ message: 'Token invalid or expired' });
   }
-};
-const admin = require('firebase-admin');
-const serviceAccount = require('./service-account.json');
+  };
+  const admin = require('firebase-admin');
+const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
-async function sendNotificationToUser(fcmToken, message) {
-  try {
-    await admin.messaging().send({
-      token: fcmToken,
-      notification: {
-        title: message.title,
-        body: message.body,
-      },
-    });
-    console.log('Notification sent');
-  } catch (error) {
-    console.error('Error sending notification:', error);
-  }
-}
-
-async function getAppointmentsAtTimes(targetDates) {
-  // targetDates is an array of Date objects (like oneHourLater and oneDayLater)
-
-  // We will create a query with "WHERE date BETWEEN X AND Y" for each target time with 1-minute window
-
-  const timeWindows = targetDates.map(date => {
-    const start = new Date(date.getTime());
-    const end = new Date(date.getTime() + 60 * 1000); // 1 minute later
-    return { start, end };
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
   });
-
-  // Build WHERE clause with OR for each window
-  // e.g. (date BETWEEN start1 AND end1) OR (date BETWEEN start2 AND end2)
-  const conditions = timeWindows.map((_, idx) => `date BETWEEN $${idx * 2 + 1} AND $${idx * 2 + 2}`).join(' OR ');
-  
-  const values = [];
-  timeWindows.forEach(window => {
-    values.push(window.start.toISOString());
-    values.push(window.end.toISOString());
-  });
-
-  const query = `SELECT * FROM appointment WHERE ${conditions} AND status = 'Confirmed'`;
-
-  try {
-    const result = await pool.query(query, values);
-    return result.rows;
-  } catch (err) {
-    console.error('DB query error:', err);
-    return [];
-  }
-}
-
-
-cron.schedule('*/5 * * * *', async () => {
-  const now = new Date();
-  const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-  const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
-  const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
-
-  for (const appt of appointmentsToNotify) {
-    const token = await getUserFcmToken(appt.idpatient); // assuming userId is idpatient
-    if (token) {
-      await sendNotificationToUser(token, {
-        title: 'Upcoming appointment',
-        body: `Your appointment is scheduled at ${appt.date}`,
+  async function sendNotificationToUser(fcmToken, message) {
+    try {
+      await admin.messaging().send({
+        token: fcmToken,
+        notification: {
+          title: message.title,
+          body: message.body,
+        },
       });
+      console.log('Notification sent');
+    } catch (error) {
+      console.error('Error sending notification:', error);
     }
   }
-});
+
+  async function getAppointmentsAtTimes(targetDates) {
+    // targetDates is an array of Date objects (like oneHourLater and oneDayLater)
+
+    // We will create a query with "WHERE date BETWEEN X AND Y" for each target time with 1-minute window
+
+    const timeWindows = targetDates.map(date => {
+      const start = new Date(date.getTime());
+      const end = new Date(date.getTime() + 60 * 1000); // 1 minute later
+      return { start, end };
+    });
+
+    // Build WHERE clause with OR for each window
+    // e.g. (date BETWEEN start1 AND end1) OR (date BETWEEN start2 AND end2)
+    const conditions = timeWindows.map((_, idx) => `date BETWEEN $${idx * 2 + 1} AND $${idx * 2 + 2}`).join(' OR ');
+    
+    const values = [];
+    timeWindows.forEach(window => {
+      values.push(window.start.toISOString());
+      values.push(window.end.toISOString());
+    });
+
+    const query = `SELECT * FROM appointment WHERE ${conditions} AND status = 'Confirmed'`;
+
+    try {
+      const result = await pool.query(query, values);
+      return result.rows;
+    } catch (err) {
+      console.error('DB query error:', err);
+      return [];
+    }
+  }
+
+
+  cron.schedule('*/5 * * * *', async () => {
+    const now = new Date();
+    const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+    const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
+
+    for (const appt of appointmentsToNotify) {
+      const token = await getUserFcmToken(appt.idpatient); // assuming userId is idpatient
+      if (token) {
+        await sendNotificationToUser(token, {
+          title: 'Upcoming appointment',
+          body: `Your appointment is scheduled at ${appt.date}`,
+        });
+      }
+    }
+  });
 
 
 app.post("/api/app/register", async (req, res) => {
