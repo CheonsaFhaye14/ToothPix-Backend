@@ -1703,12 +1703,7 @@ app.get('/api/app/patients', async (req, res) => {
 // });
 
 app.get('/api/app/appointments', async (req, res) => {
-  const updateQuery = `
-   UPDATE appointment
-SET status = 'completed'
-WHERE date < NOW() AT TIME ZONE 'Asia/Manila'
-  AND status != 'cancelled';
-  `;
+ 
 
   // Modify the fetchQuery to include sorting by date and then by idappointment
   const fetchQuery = 'SELECT * FROM appointment ORDER BY date ASC, idappointment ASC'; // First by date, then by idappointment
@@ -1717,9 +1712,6 @@ WHERE date < NOW() AT TIME ZONE 'Asia/Manila'
 
   try {
     await client.query('BEGIN'); // Start a transaction
-
-    // Update the status of past appointments
-    await client.query(updateQuery);
 
     // Fetch all appointments, sorted by date and idappointment
     const result = await client.query(fetchQuery);
