@@ -78,39 +78,31 @@ console.log('✅ Firebase Admin initialized with project:', serviceAccount.proje
 // In-memory map for active tokens: idpatient => fcmToken
 const activeTokens = new Map();
 
-// Endpoint to register token on login
-app.post('/fcm-token', (req, res) => {
-  const { idpatient, token } = req.body;
-  if (!idpatient || !token) {
-    return res.status(400).json({ error: 'Missing idpatient or token' });
-  }
-  activeTokens.set(idpatient, token);
-  console.log(`✅ Token stored for user ${idpatient}`);
-  res.json({ success: true });
-});
-
-// Endpoint to clear token on logout
-app.post('/logout', (req, res) => {
-  const { idpatient } = req.body;
-  if (!idpatient) {
-    return res.status(400).json({ error: 'Missing idpatient' });
-  }
-  activeTokens.delete(idpatient);
-  console.log(`🗑 Token cleared for user ${idpatient}`);
-  res.json({ success: true });
-});
-
 // Send notification helper
 async function sendNotificationToUser(fcmToken, appt) {
   try {
+    // Parse the raw UTC date string into a Date object
+    const utcDate = new Date(appt.date);
+
+    // Format date in Manila timezone with your desired style
+    const manilaDateStr = utcDate.toLocaleString('en-US', {
+      timeZone: 'Asia/Manila',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+
     await admin.messaging().send({
       token: fcmToken,
       data: {
-        appointmentTime: appt.date.toISOString(),
+        appointmentTime: utcDate.toISOString(),
       },
       notification: {
         title: 'Upcoming appointment',
-        body: `Your appointment is scheduled at ${appt.date.toLocaleString()}`,
+        body: `Your appointment is scheduled at ${manilaDateStr}`,
       },
     });
     console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`);
@@ -118,6 +110,7 @@ async function sendNotificationToUser(fcmToken, appt) {
     console.error('❌ Error sending notification:', error);
   }
 }
+
 
 // Get appointments within 1-minute window of target dates
 async function getAppointmentsAtTimes(targetDates) {
@@ -137,7 +130,7 @@ async function getAppointmentsAtTimes(targetDates) {
     values.push(window.end.toISOString());
   });
 
-  const query = `SELECT * FROM appointment WHERE (${conditions}) AND status = 'Confirmed'`;
+  const query = `SELECT * FROM appointment WHERE (${conditions}) `;
 
   try {
     const result = await pool.query(query, values);
