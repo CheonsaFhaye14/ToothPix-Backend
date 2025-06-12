@@ -145,6 +145,10 @@ console.log('✅ Firebase Admin initialized with project:', serviceAccount.proje
     }
   }
 });
+sendNotificationToUser(
+  'cxYN3q90R96vEJQDb6BNfA:APA91bHj5Q7o86fgqjWEQVGYEl9621bStxol2VPFdu2KQWjJljjEA2XyDDhsT0PjGyVrBSGRW0_V41UcLLSS9Hz4GQcdevfY6zHcVmgWQUhe9D9gEKjWS5M',
+  { date: new Date().toISOString() }
+);
 
 
 app.post("/api/app/register", async (req, res) => {
