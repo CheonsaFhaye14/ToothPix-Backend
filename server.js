@@ -68,10 +68,6 @@ const authenticateToken = (req, res, next) => {
   const admin = require('firebase-admin');
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 console.log('GOOGLE_SERVICE_ACCOUNT:', process.env.GOOGLE_SERVICE_ACCOUNT ? 'Exists' : 'Not set');
-console.log('GOOGLE_SERVICE_ACCOUNT JSON:', process.env.GOOGLE_SERVICE_ACCOUNT);
-if (!process.env.GOOGLE_SERVICE_ACCOUNT) {
-  throw new Error('❌ GOOGLE_SERVICE_ACCOUNT is not set in environment variables!');
-}
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
