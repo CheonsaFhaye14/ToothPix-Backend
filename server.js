@@ -73,13 +73,17 @@ const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
   });
   async function sendNotificationToUser(fcmToken, message) {
     try {
-      await admin.messaging().send({
-        token: fcmToken,
-        notification: {
-          title: message.title,
-          body: message.body,
-        },
-      });
+     await admin.messaging().send({
+  token: fcmToken,
+  data: {
+    appointmentTime: appt.date, // must be ISO string
+  },
+  notification: {
+    title: 'Upcoming appointment',
+    body: `Your appointment is scheduled at ${appt.date}`,
+  },
+});
+
       console.log('Notification sent');
     } catch (error) {
       console.error('Error sending notification:', error);
