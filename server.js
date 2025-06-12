@@ -1848,13 +1848,14 @@ app.get('/api/app/appointments', async (req, res) => {
 let refreshTokensStore = [];
 
 app.post('/api/app/login', [
-  body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
+  body('username').isLength({ min: 3 }),
+  body('password').isLength({ min: 6 }),
+  body('fcmToken').optional().isString(),  // validate fcmToken if provided
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-  const { username, password } = req.body;
+  const { username, password, fcmToken } = req.body;
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
@@ -1869,23 +1870,26 @@ app.post('/api/app/login', [
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
-    // Generate access token
+    // Store fcmToken in memory if provided
+    if (fcmToken) {
+      activeTokens.set(user.idusers, fcmToken);
+      console.log(`Stored FCM token for user ${user.idusers}`);
+    }
+
+    // Generate tokens as before
     const accessToken = jwt.sign(
       { userId: user.idusers, username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
-    // Generate refresh token (random string)
     const refreshToken = crypto.randomBytes(64).toString('hex');
-
-    // Store refresh token associated with user id
     refreshTokensStore.push({ token: refreshToken, userId: user.idusers });
 
     res.status(200).json({
       message: 'Login successful',
-      accessToken: accessToken,
-      refreshToken: refreshToken,
+      accessToken,
+      refreshToken,
       user: {
         id: user.idusers,
         username: user.username,
@@ -1897,6 +1901,7 @@ app.post('/api/app/login', [
     res.status(500).json({ message: 'Error querying database' });
   }
 });
+
 
 app.post('/api/app/refresh-token', (req, res) => {
   const { refreshToken } = req.body;
@@ -1916,14 +1921,24 @@ app.post('/api/app/refresh-token', (req, res) => {
 
   res.status(200).json({ accessToken: newAccessToken });
 });
+
 app.post('/api/app/logout', (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) return res.status(400).json({ message: 'Refresh token required' });
 
+  // Find userId before filtering out
+  const storedToken = refreshTokensStore.find(rt => rt.token === refreshToken);
+  if (storedToken) {
+    activeTokens.delete(storedToken.userId);
+    console.log(`Removed FCM token for user ${storedToken.userId} on logout`);
+  }
+
+  // Remove refresh token from store
   refreshTokensStore = refreshTokensStore.filter(rt => rt.token !== refreshToken);
 
   res.status(200).json({ message: 'Logged out successfully' });
 });
+
 
 
 // Get profile route
