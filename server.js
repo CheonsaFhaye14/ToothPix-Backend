@@ -65,6 +65,47 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ message: 'Token invalid or expired' });
   }
 };
+const admin = require('firebase-admin');
+const serviceAccount = require('./service-account.json');
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+async function sendNotificationToUser(fcmToken, message) {
+  try {
+    await admin.messaging().send({
+      token: fcmToken,
+      notification: {
+        title: message.title,
+        body: message.body,
+      },
+    });
+    console.log('Notification sent');
+  } catch (error) {
+    console.error('Error sending notification:', error);
+  }
+}
+
+
+cron.schedule('*/5 * * * *', async () => {
+  const now = new Date();
+  const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+  const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  // Query DB for appointments exactly one hour later or one day later
+
+  const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
+
+  for (const appt of appointmentsToNotify) {
+    const token = await getUserFcmToken(appt.userId);
+    if (token) {
+      await sendNotificationToUser(token, {
+        title: 'Upcoming appointment',
+        body: `Your appointment is scheduled at ${appt.date} ${appt.time}`,
+      });
+    }
+  }
+});
 
 
 app.post("/api/app/register", async (req, res) => {
