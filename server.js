@@ -11,7 +11,7 @@ const { body, validationResult } = require('express-validator');
 const cron = require('node-cron');
 const app = express();
 const PORT = process.env.APP_API_PORT || 3000;
-
+ const admin = require('firebase-admin');
 // CORS configuration
 const allowedOrigins = [
   process.env.FRONTEND_URL,           // e.g., https://example1.com
@@ -65,26 +65,52 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ message: 'Token invalid or expired' });
   }
   };
-  const admin = require('firebase-admin');
+ 
+// Firebase admin setup
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 console.log('GOOGLE_SERVICE_ACCOUNT:', process.env.GOOGLE_SERVICE_ACCOUNT ? 'Exists' : 'Not set');
 
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 console.log('✅ Firebase Admin initialized with project:', serviceAccount.project_id);
 
+// In-memory map for active tokens: idpatient => fcmToken
+const activeTokens = new Map();
 
-  async function sendNotificationToUser(fcmToken, appt) {
+// Endpoint to register token on login
+app.post('/fcm-token', (req, res) => {
+  const { idpatient, token } = req.body;
+  if (!idpatient || !token) {
+    return res.status(400).json({ error: 'Missing idpatient or token' });
+  }
+  activeTokens.set(idpatient, token);
+  console.log(`✅ Token stored for user ${idpatient}`);
+  res.json({ success: true });
+});
+
+// Endpoint to clear token on logout
+app.post('/logout', (req, res) => {
+  const { idpatient } = req.body;
+  if (!idpatient) {
+    return res.status(400).json({ error: 'Missing idpatient' });
+  }
+  activeTokens.delete(idpatient);
+  console.log(`🗑 Token cleared for user ${idpatient}`);
+  res.json({ success: true });
+});
+
+// Send notification helper
+async function sendNotificationToUser(fcmToken, appt) {
   try {
     await admin.messaging().send({
       token: fcmToken,
       data: {
-        appointmentTime: appt.date, // ISO string
+        appointmentTime: appt.date.toISOString(),
       },
       notification: {
         title: 'Upcoming appointment',
-        body: `Your appointment is scheduled at ${appt.date}`,
+        body: `Your appointment is scheduled at ${appt.date.toLocaleString()}`,
       },
     });
     console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`);
@@ -93,66 +119,58 @@ console.log('✅ Firebase Admin initialized with project:', serviceAccount.proje
   }
 }
 
+// Get appointments within 1-minute window of target dates
+async function getAppointmentsAtTimes(targetDates) {
+  const timeWindows = targetDates.map(date => {
+    const start = new Date(date.getTime());
+    const end = new Date(date.getTime() + 60 * 1000); // 1 minute later
+    return { start, end };
+  });
 
-  async function getAppointmentsAtTimes(targetDates) {
-    // targetDates is an array of Date objects (like oneHourLater and oneDayLater)
+  const conditions = timeWindows
+    .map((_, idx) => `date BETWEEN $${idx * 2 + 1} AND $${idx * 2 + 2}`)
+    .join(' OR ');
 
-    // We will create a query with "WHERE date BETWEEN X AND Y" for each target time with 1-minute window
+  const values = [];
+  timeWindows.forEach(window => {
+    values.push(window.start.toISOString());
+    values.push(window.end.toISOString());
+  });
 
-    const timeWindows = targetDates.map(date => {
-      const start = new Date(date.getTime());
-      const end = new Date(date.getTime() + 60 * 1000); // 1 minute later
-      return { start, end };
-    });
+  const query = `SELECT * FROM appointment WHERE (${conditions}) AND status = 'Confirmed'`;
 
-    // Build WHERE clause with OR for each window
-    // e.g. (date BETWEEN start1 AND end1) OR (date BETWEEN start2 AND end2)
-    const conditions = timeWindows.map((_, idx) => `date BETWEEN $${idx * 2 + 1} AND $${idx * 2 + 2}`).join(' OR ');
-    
-    const values = [];
-    timeWindows.forEach(window => {
-      values.push(window.start.toISOString());
-      values.push(window.end.toISOString());
-    });
-
-    const query = `SELECT * FROM appointment WHERE ${conditions} AND status = 'Confirmed'`;
-
-    try {
-      const result = await pool.query(query, values);
-      return result.rows;
-    } catch (err) {
-      console.error('DB query error:', err);
-      return [];
-    }
+  try {
+    const result = await pool.query(query, values);
+    return result.rows;
+  } catch (err) {
+    console.error('DB query error:', err);
+    return [];
   }
+}
 
-
-  cron.schedule('*/5 * * * *', async () => {
+// Cron job to check appointments and notify logged-in users every 5 minutes
+cron.schedule('*/5 * * * *', async () => {
   console.log(`[CRON] Running at ${new Date().toISOString()}`);
 
   const now = new Date();
   const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
   const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
+  console.log('🗓 Checking appointment window from:', oneHourLater.toISOString(), 'and', oneDayLater.toISOString());
+
   const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
-console.log('🗓 Checking appointment window from:', oneHourLater.toISOString());
+  console.log(`🔍 Found ${appointmentsToNotify.length} appointments to notify`);
 
   for (const appt of appointmentsToNotify) {
-    const token = await getUserFcmToken(appt.idpatient); // Your own DB logic
+    const token = activeTokens.get(appt.idpatient);
     if (token) {
       await sendNotificationToUser(token, appt);
+      console.log(`📅 Appointment: ${appt.date.toISOString()} for patient ${appt.idpatient}`);
     } else {
-      console.warn(`⚠️ No FCM token for user ${appt.idpatient}`);
+      console.warn(`⚠️ User ${appt.idpatient} not logged in (no active token)`);
     }
   }
-    console.log(`🔍 Found ${appointmentsToNotify.length} appointments to notify`);
-console.log(`📅 Appointment: ${appt.date} for patient ${appt.idpatient}`);
-
 });
-sendNotificationToUser(
-  'cxYN3q90R96vEJQDb6BNfA:APA91bHj5Q7o86fgqjWEQVGYEl9621bStxol2VPFdu2KQWjJljjEA2XyDDhsT0PjGyVrBSGRW0_V41UcLLSS9Hz4GQcdevfY6zHcVmgWQUhe9D9gEKjWS5M',
-  { date: new Date().toISOString() }
-);
 
 
 app.post("/api/app/register", async (req, res) => {
