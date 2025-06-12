@@ -377,10 +377,10 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
 cron.schedule('*/5 * * * *', async () => { // every 5 minutes
   try {
     await pool.query(`
-      UPDATE appointment
-      SET status = 'completed'
-      WHERE date < NOW() AT TIME ZONE 'Asia/Manila'
-        AND status NOT IN ('cancelled', 'completed')
+     UPDATE appointment
+SET status = 'completed'
+WHERE date AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Manila' < NOW() AT TIME ZONE 'Asia/Manila'
+  AND status NOT IN ('cancelled', 'completed')
     `);
     console.log('Appointment statuses updated.');
   } catch (err) {
