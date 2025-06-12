@@ -135,6 +135,7 @@ console.log('✅ Firebase Admin initialized with project:', serviceAccount.proje
   const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
   const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
+console.log('🗓 Checking appointment window from:', oneHourLater.toISOString());
 
   for (const appt of appointmentsToNotify) {
     const token = await getUserFcmToken(appt.idpatient); // Your own DB logic
@@ -144,6 +145,9 @@ console.log('✅ Firebase Admin initialized with project:', serviceAccount.proje
       console.warn(`⚠️ No FCM token for user ${appt.idpatient}`);
     }
   }
+    console.log(`🔍 Found ${appointmentsToNotify.length} appointments to notify`);
+console.log(`📅 Appointment: ${appt.date} for patient ${appt.idpatient}`);
+
 });
 sendNotificationToUser(
   'cxYN3q90R96vEJQDb6BNfA:APA91bHj5Q7o86fgqjWEQVGYEl9621bStxol2VPFdu2KQWjJljjEA2XyDDhsT0PjGyVrBSGRW0_V41UcLLSS9Hz4GQcdevfY6zHcVmgWQUhe9D9gEKjWS5M',
