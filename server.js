@@ -114,11 +114,14 @@ async function sendNotificationToUser(fcmToken, appt) {
 
 // Get appointments within 1-minute window of target dates
 async function getAppointmentsAtTimes(targetDates) {
-  const timeWindows = targetDates.map(date => {
-    const start = new Date(date.getTime());
-    const end = new Date(date.getTime() + 60 * 1000); // 1 minute later
-    return { start, end };
-  });
+const windowDuration = 5 * 60 * 1000; // 5 minutes
+
+const timeWindows = targetDates.map(date => {
+  const start = new Date(date.getTime());
+  const end = new Date(date.getTime() + windowDuration);
+  return { start, end };
+});
+
 
   const conditions = timeWindows
     .map((_, idx) => `date BETWEEN $${idx * 2 + 1} AND $${idx * 2 + 2}`)
@@ -134,6 +137,8 @@ async function getAppointmentsAtTimes(targetDates) {
 
   try {
     const result = await pool.query(query, values);
+   console.log('Appointments fetched from DB:', result.rows);
+
     return result.rows;
   } catch (err) {
     console.error('DB query error:', err);
@@ -142,7 +147,7 @@ async function getAppointmentsAtTimes(targetDates) {
 }
 
 // Cron job to check appointments and notify logged-in users every 5 minutes
-cron.schedule('*/5 * * * *', async () => {
+cron.schedule('* * * * *', async () => {
   console.log(`[CRON] Running at ${new Date().toISOString()}`);
 
   const now = new Date();
