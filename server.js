@@ -72,26 +72,27 @@ console.log('GOOGLE_SERVICE_ACCOUNT:', process.env.GOOGLE_SERVICE_ACCOUNT ? 'Exi
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
   });
+console.log('✅ Firebase Admin initialized with project:', serviceAccount.project_id);
 
 
-  async function sendNotificationToUser(fcmToken, message) {
-    try {
-     await admin.messaging().send({
-  token: fcmToken,
-  data: {
-    appointmentTime: appt.date, // must be ISO string
-  },
-  notification: {
-    title: 'Upcoming appointment',
-    body: `Your appointment is scheduled at ${appt.date}`,
-  },
-});
-
-      console.log('Notification sent');
-    } catch (error) {
-      console.error('Error sending notification:', error);
-    }
+  async function sendNotificationToUser(fcmToken, appt) {
+  try {
+    await admin.messaging().send({
+      token: fcmToken,
+      data: {
+        appointmentTime: appt.date, // ISO string
+      },
+      notification: {
+        title: 'Upcoming appointment',
+        body: `Your appointment is scheduled at ${appt.date}`,
+      },
+    });
+    console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`);
+  } catch (error) {
+    console.error('❌ Error sending notification:', error);
   }
+}
+
 
   async function getAppointmentsAtTimes(targetDates) {
     // targetDates is an array of Date objects (like oneHourLater and oneDayLater)
@@ -127,22 +128,23 @@ console.log('GOOGLE_SERVICE_ACCOUNT:', process.env.GOOGLE_SERVICE_ACCOUNT ? 'Exi
 
 
   cron.schedule('*/5 * * * *', async () => {
-    const now = new Date();
-    const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-    const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  console.log(`[CRON] Running at ${new Date().toISOString()}`);
 
-    const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
+  const now = new Date();
+  const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+  const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-    for (const appt of appointmentsToNotify) {
-      const token = await getUserFcmToken(appt.idpatient); // assuming userId is idpatient
-      if (token) {
-        await sendNotificationToUser(token, {
-          title: 'Upcoming appointment',
-          body: `Your appointment is scheduled at ${appt.date}`,
-        });
-      }
+  const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
+
+  for (const appt of appointmentsToNotify) {
+    const token = await getUserFcmToken(appt.idpatient); // Your own DB logic
+    if (token) {
+      await sendNotificationToUser(token, appt);
+    } else {
+      console.warn(`⚠️ No FCM token for user ${appt.idpatient}`);
     }
-  });
+  }
+});
 
 
 app.post("/api/app/register", async (req, res) => {
