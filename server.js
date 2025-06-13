@@ -322,6 +322,84 @@ app.post('/api/app/appointments', async (req, res) => {
   }
 });
 
+app.get('/api/website/admindashboard', async (req, res) => {
+  const query = `
+    WITH 
+    appointments_today AS (
+      SELECT COUNT(*) AS total
+      FROM appointment
+      WHERE DATE(date) = CURRENT_DATE
+    ),
+    total_unpaid AS (
+      SELECT 
+        SUM(
+          COALESCE(
+            (
+              SELECT SUM(s.price)
+              FROM appointment_services aps
+              JOIN service s ON aps.idservice = s.idservice
+              WHERE aps.idappointment = r.idappointment
+            ), 0
+          ) - COALESCE(r.total_paid, 0)
+        ) AS unpaid_total
+      FROM records r
+    ),
+    top_dentists AS (
+      SELECT 
+        r.iddentist,
+        CONCAT(u.firstname, ' ', u.lastname) AS fullname,
+        COUNT(DISTINCT r.idpatient) AS total_patients
+      FROM records r
+      JOIN users u ON u.idusers = r.iddentist
+      GROUP BY r.iddentist, fullname
+      ORDER BY total_patients DESC
+      LIMIT 3
+    ),
+    recent_completed AS (
+      SELECT 
+        a.idappointment,
+        a.date,
+        CONCAT(p.firstname, ' ', p.lastname) AS patient,
+        CONCAT(d.firstname, ' ', d.lastname) AS dentist,
+        a.status
+      FROM appointment a
+      LEFT JOIN users p ON a.idpatient = p.idusers
+      LEFT JOIN users d ON a.iddentist = d.idusers
+      WHERE a.status = 'completed'
+      ORDER BY a.date DESC
+      LIMIT 5
+    )
+
+    SELECT 
+      (SELECT total FROM appointments_today) AS totalAppointmentsToday,
+      (SELECT unpaid_total FROM total_unpaid) AS totalUnpaidBalance,
+      JSON_AGG(t) AS topDentists,
+      (SELECT JSON_AGG(r) FROM recent_completed r) AS recentAppointments
+    FROM top_dentists t;
+  `;
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No dashboard data found' });
+    }
+
+    const row = result.rows[0];
+
+    res.status(200).json({
+      totalAppointmentsToday: row.totalappointmentstoday,
+      totalUnpaidBalance: row.totalunpaidbalance,
+      topDentists: row.topdentists,
+      recentAppointments: row.recentappointments,
+    });
+  } catch (err) {
+    console.error('Error fetching admin dashboard data:', err.message);
+    res.status(500).json({ message: 'Error fetching admin dashboard', error: err.message });
+  }
+});
+
+
 app.post('/api/website/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
 
