@@ -100,7 +100,11 @@ async function sendNotificationToUser(fcmToken, appt, options = {}) {
   notification: {
     title: options.customTitle || 'Upcoming appointment',
     body: options.customBody || `Your appointment is scheduled at ${manilaDateStr}`,
-    android_channel_id: 'appointment_channel_id', // ✅ match your Flutter channel ID
+  },
+  android: {
+    notification: {
+      channelId: 'appointment_channel_id', // ✅ Correct placement
+    },
   },
 });
     console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`);
