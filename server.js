@@ -2195,24 +2195,19 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 });
 
 
-// ✅ ADD SERVICE ROUTES HERE
 app.post('/api/app/services', async (req, res) => {
   const { name, description, price, category } = req.body;
 
-  // Validation
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
-
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
-
   if (!category || typeof category !== 'string' || category.trim().length === 0) {
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
   }
 
-  // Debug log
   console.log('Received data:', { name, description, price, category });
 
   const query = `
@@ -2232,17 +2227,41 @@ app.post('/api/app/services', async (req, res) => {
 
     console.log('Service added:', service);
 
+    // 🔔 Send notification to all patient tokens
+    const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE role = 'patient' AND fcm_token IS NOT NULL`);
+    const tokens = tokensResult.rows.map(row => row.fcm_token).filter(token => token);
+
+    const message = {
+      notification: {
+        title: '🦷 New Service Available',
+        body: `${service.name} has been added to our dental services!`,
+      },
+      data: {
+        serviceId: service.idservice.toString(),
+        serviceName: service.name,
+      },
+      android: {
+        notification: {
+          channelId: 'appointment_channel_id', // This matches Flutter setup
+        },
+      },
+      tokens,
+    };
+
+    if (tokens.length > 0) {
+      const response = await admin.messaging().sendMulticast(message);
+      console.log(`📩 Notification sent to ${response.successCount}/${tokens.length} devices.`);
+    } else {
+      console.log('⚠️ No FCM tokens found to send service notification.');
+    }
+
     res.status(201).json({
       message: 'Service added successfully',
       service,
     });
   } catch (err) {
     console.error('Error adding service:', err.message);
-
-    res.status(500).json({
-      message: 'Error adding service',
-      error: err.message,
-    });
+    res.status(500).json({ message: 'Error adding service', error: err.message });
   }
 });
 
