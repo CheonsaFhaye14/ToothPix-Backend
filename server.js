@@ -2079,10 +2079,14 @@ app.post('/api/app/login', [
 
 // Validate FCM token and update DB
 if (fcmToken) {
-  await pool.query('UPDATE users SET fcm_token = $1 WHERE idusers = $2', [fcmToken, user.idusers]);
-  console.log(`✅ Stored FCM token in DB for user ${user.idusers}`);
-}
+  // Step 1: Remove the FCM token from other users who may have it
+  await pool.query('UPDATE users SET fcm_token = NULL WHERE fcm_token = $1 AND idusers != $2', [fcmToken, user.idusers]);
 
+  // Step 2: Store the token for the current user
+  await pool.query('UPDATE users SET fcm_token = $1 WHERE idusers = $2', [fcmToken, user.idusers]);
+
+  console.log(`✅ Updated FCM token for user ${user.idusers}, removed from others if duplicated.`);
+}
 
     // Generate tokens as before
     const accessToken = jwt.sign(
