@@ -2193,7 +2193,6 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
     res.status(500).json({ message: 'Error updating profile' });
   }
 });
-
 app.post('/api/app/services', async (req, res) => {
   const { name, description, price, category } = req.body;
 
@@ -2219,7 +2218,7 @@ app.post('/api/app/services', async (req, res) => {
   try {
     const result = await pool.query(query, [
       name.trim(),
-      description,
+      description ?? null,  // ✅ Handles undefined/empty description
       parseFloat(price),
       category.trim()
     ]);
@@ -2227,7 +2226,7 @@ app.post('/api/app/services', async (req, res) => {
 
     console.log('✅ Service added:', service);
 
-    // 🔔 Send notification to ALL users with FCM tokens (not just patients)
+    // 🔔 Send notification to ALL users with FCM tokens
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
     const tokens = tokensResult.rows.map(row => row.fcm_token).filter(Boolean);
 
@@ -2249,8 +2248,12 @@ app.post('/api/app/services', async (req, res) => {
         tokens,
       };
 
-      const response = await admin.messaging().sendMulticast(message);
-      console.log(`📩 Notification sent to ${response.successCount}/${tokens.length} devices.`);
+      try {
+        const response = await admin.messaging().sendMulticast(message);
+        console.log(`📩 Notification sent to ${response.successCount}/${tokens.length} devices.`);
+      } catch (notifErr) {
+        console.error('❌ Error sending FCM notifications:', notifErr.message);
+      }
     } else {
       console.log('⚠️ No FCM tokens found to send service notification.');
     }
@@ -2259,10 +2262,10 @@ app.post('/api/app/services', async (req, res) => {
       message: 'Service added successfully',
       service,
     });
-  } } catch (err) {
-  console.error('❌ Error adding service:', err.stack); // <- Use stack instead of just message
-  res.status(500).json({ message: 'Error adding service', error: err.message });
-}
+  } catch (err) {
+    console.error('❌ Error adding service:', err.stack);
+    res.status(500).json({ message: 'Error adding service', error: err.message });
+  }
 });
 
 
