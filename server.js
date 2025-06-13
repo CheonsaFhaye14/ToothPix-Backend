@@ -162,7 +162,9 @@ cron.schedule('* * * * *', async () => {
   console.log(`🔍 Found ${appointmentsToNotify.length} appointments to notify`);
 
   for (const appt of appointmentsToNotify) {
-    const token = activeTokens.get(appt.idpatient);
+    const { rows } = await pool.query('SELECT fcm_token FROM users WHERE idusers = $1', [appt.idpatient]);
+    const token = rows[0]?.fcm_token;
+   
     if (token) {
       await sendNotificationToUser(token, appt);
       console.log(`📅 Appointment: ${appt.date.toISOString()} for patient ${appt.idpatient}`);
@@ -800,7 +802,6 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
   const id = req.params.id;
   const { status, notes, date } = req.body;
 
-  // Only allow these statuses
   const allowedStatuses = ['approved', 'cancelled', 'rescheduled'];
   if (!status || !allowedStatuses.includes(status)) {
     return res.status(400).json({ message: 'Invalid or missing status' });
@@ -810,7 +811,6 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
   const formattedDate = now.toISOString().slice(0, 16).replace("T", " ");
   let finalNotes = notes;
 
-  // Auto-generate notes if not provided
   if (!notes) {
     switch (status) {
       case 'approved':
@@ -820,14 +820,11 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
         finalNotes = `Cancelled by dentist on ${formattedDate}. Please reschedule.`;
         break;
       case 'rescheduled':
-        if (date) {
-          finalNotes = `Rescheduled to ${date}`;
-        }
+        if (date) finalNotes = `Rescheduled to ${date}`;
         break;
     }
   }
 
-  // Build dynamic query
   const setValues = [];
   const queryParams = [];
   let query = 'UPDATE appointment SET ';
@@ -836,12 +833,10 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
     setValues.push(`status = $${setValues.length + 1}`);
     queryParams.push(status);
   }
-
   if (finalNotes !== undefined) {
     setValues.push(`notes = $${setValues.length + 1}`);
     queryParams.push(finalNotes);
   }
-
   if (date && !isNaN(Date.parse(date))) {
     setValues.push(`date = $${setValues.length + 1}`);
     queryParams.push(date);
@@ -863,7 +858,7 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
 
     const updatedAppt = result.rows[0];
 
-    // 🔔 Send appropriate notification
+    // ✅ Send FCM notification if patient is logged in
     const fcmToken = activeTokens.get(updatedAppt.idpatient);
     if (fcmToken) {
       const manilaDateStr = new Date(updatedAppt.date).toLocaleString('en-US', {
@@ -886,11 +881,11 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
           break;
         case 'cancelled':
           customTitle = 'Appointment Cancelled';
-          customBody = `Your appointment on ${manilaDateStr} has been cancelled by the dentist. Please reschedule.`;
+          customBody = `Your appointment on ${manilaDateStr} has been cancelled. Please reschedule.`;
           break;
         case 'rescheduled':
           customTitle = 'Appointment Rescheduled';
-          customBody = `Your appointment has been moved to ${manilaDateStr}. Please check the new schedule.`;
+          customBody = `Your appointment has been moved to ${manilaDateStr}. Please check your new schedule.`;
           break;
       }
 
@@ -2082,11 +2077,12 @@ app.post('/api/app/login', [
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
-    // Store fcmToken in memory if provided
-    if (fcmToken) {
-      activeTokens.set(user.idusers, fcmToken);
-      console.log(`Stored FCM token for user ${user.idusers}`);
-    }
+// Validate FCM token and update DB
+if (fcmToken) {
+  await pool.query('UPDATE users SET fcm_token = $1 WHERE idusers = $2', [fcmToken, user.idusers]);
+  console.log(`✅ Stored FCM token in DB for user ${user.idusers}`);
+}
+
 
     // Generate tokens as before
     const accessToken = jwt.sign(
@@ -2134,15 +2130,26 @@ app.post('/api/app/refresh-token', (req, res) => {
   res.status(200).json({ accessToken: newAccessToken });
 });
 
-app.post('/api/app/logout', (req, res) => {
+app.post('/api/app/logout', async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) return res.status(400).json({ message: 'Refresh token required' });
 
   // Find userId before filtering out
   const storedToken = refreshTokensStore.find(rt => rt.token === refreshToken);
   if (storedToken) {
-    activeTokens.delete(storedToken.userId);
-    console.log(`Removed FCM token for user ${storedToken.userId} on logout`);
+    const userId = storedToken.userId;
+
+    // 🔁 Clear FCM token in memory
+    activeTokens.delete(userId);
+    console.log(`🧹 Removed in-memory FCM token for user ${userId} on logout`);
+
+    try {
+      // 🔁 Clear FCM token in the database
+      await pool.query('UPDATE users SET fcm_token = NULL WHERE idusers = $1', [userId]);
+      console.log(`🧹 Cleared FCM token in DB for user ${userId}`);
+    } catch (err) {
+      console.error('❌ Error clearing FCM token in DB:', err.message);
+    }
   }
 
   // Remove refresh token from store
@@ -2150,7 +2157,6 @@ app.post('/api/app/logout', (req, res) => {
 
   res.status(200).json({ message: 'Logged out successfully' });
 });
-
 
 
 // Get profile route
@@ -2196,7 +2202,7 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 app.post('/api/app/services', async (req, res) => {
   const { name, description, price, category } = req.body;
 
-  // 🔎 Validation
+  // 🔎 Input validation
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
@@ -2207,66 +2213,86 @@ app.post('/api/app/services', async (req, res) => {
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
   }
 
-  console.log('Received data:', { name, description, price, category });
+  console.log('📥 Received service data:', { name, description, price, category });
 
-  const query = `
+  const insertQuery = `
     INSERT INTO service (name, description, price, category)
     VALUES ($1, $2, $3, $4)
     RETURNING idservice, name, description, price, category
   `;
 
   try {
-    const result = await pool.query(query, [
+    // 📌 Insert service into DB
+    const result = await pool.query(insertQuery, [
       name.trim(),
-      description ?? null,  // ✅ Handles undefined/empty description
+      description ?? null,
       parseFloat(price),
       category.trim()
     ]);
     const service = result.rows[0];
 
-    console.log('✅ Service added:', service);
+    console.log('✅ Service added to DB:', service);
 
-    // 🔔 Send notification to ALL users with FCM tokens
+    // 🔔 Get all valid FCM tokens
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
-    const tokens = tokensResult.rows.map(row => row.fcm_token).filter(Boolean);
+    const tokens = tokensResult.rows
+      .map(row => row.fcm_token)
+      .filter(token => typeof token === 'string' && token.trim().length > 0);
 
-    if (tokens.length > 0) {
-      const message = {
+    if (tokens.length === 0) {
+      console.log('⚠️ No valid FCM tokens found.');
+      return res.status(201).json({ message: 'Service added successfully', service, notificationSent: false });
+    }
+
+    // 🔄 Batch and send notifications (max 500 tokens per multicast request)
+    const MAX_BATCH = 500;
+    const notification = {
+      notification: {
+        title: '🦷 New Service Available',
+        body: `${service.name} has been added to our dental services!`,
+      },
+      data: {
+        serviceId: service.idservice.toString(),
+        serviceName: service.name,
+      },
+      android: {
         notification: {
-          title: '🦷 New Service Available',
-          body: `${service.name} has been added to our dental services!`,
+          channelId: 'appointment_channel_id',
+          priority: 'high',
         },
-        data: {
-          serviceId: service.idservice.toString(),
-          serviceName: service.name,
-        },
-        android: {
-          notification: {
-            channelId: 'appointment_channel_id',
-          },
-        },
-        tokens,
-      };
+      },
+    };
 
-      try {
-        const response = await admin.messaging().sendMulticast(message);
-        console.log(`📩 Notification sent to ${response.successCount}/${tokens.length} devices.`);
-      } catch (notifErr) {
-        console.error('❌ Error sending FCM notifications:', notifErr.message);
-      }
-    } else {
-      console.log('⚠️ No FCM tokens found to send service notification.');
+    let totalSuccess = 0;
+    for (let i = 0; i < tokens.length; i += MAX_BATCH) {
+      const batch = tokens.slice(i, i + MAX_BATCH);
+      const response = await admin.messaging().sendMulticast({ ...notification, tokens: batch });
+
+      totalSuccess += response.successCount;
+      console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes.`);
+      
+      // Optional: Log failed tokens
+      response.responses.forEach((resp, idx) => {
+        if (!resp.success) {
+          console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
+        }
+      });
     }
 
     res.status(201).json({
       message: 'Service added successfully',
       service,
+      notificationSent: true,
+      totalRecipients: tokens.length,
+      successfulNotifications: totalSuccess
     });
+
   } catch (err) {
-    console.error('❌ Error adding service:', err.stack);
-    res.status(500).json({ message: 'Error adding service', error: err.message });
+    console.error('❌ Error in service creation or notification:', err.stack);
+    res.status(500).json({ message: 'Error adding service or sending notifications', error: err.message });
   }
 });
+
 
 
 // Get all services route
