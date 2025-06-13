@@ -79,12 +79,9 @@ console.log('✅ Firebase Admin initialized with project:', serviceAccount.proje
 const activeTokens = new Map();
 
 // Send notification helper
-async function sendNotificationToUser(fcmToken, appt) {
+async function sendNotificationToUser(fcmToken, appt, options = {}) {
   try {
-    // Parse the raw UTC date string into a Date object
     const utcDate = new Date(appt.date);
-
-    // Format date in Manila timezone with your desired style
     const manilaDateStr = utcDate.toLocaleString('en-US', {
       timeZone: 'Asia/Manila',
       month: 'long',
@@ -101,10 +98,11 @@ async function sendNotificationToUser(fcmToken, appt) {
         appointmentTime: utcDate.toISOString(),
       },
       notification: {
-        title: 'Upcoming appointment',
-        body: `Your appointment is scheduled at ${manilaDateStr}`,
+        title: options.customTitle || 'Upcoming appointment',
+        body: options.customBody || `Your appointment is scheduled at ${manilaDateStr}`,
       },
     });
+
     console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`);
   } catch (error) {
     console.error('❌ Error sending notification:', error);
@@ -794,43 +792,42 @@ app.post('/api/website/record', async (req, res) => {
     res.status(500).json({ message: 'Failed to create appointment and record.', error: error.message });
   }
 });
-
 app.put('/api/app/appointmentstatus/:id', async (req, res) => {
   const id = req.params.id;
   const { status, notes, date } = req.body;
 
-  // Supported statuses
-  const allowedStatuses = ['approved', 'cancelled', 'rescheduled', 'declined'];
-
-  // Validate status
+  // Only allow these statuses
+  const allowedStatuses = ['approved', 'cancelled', 'rescheduled'];
   if (!status || !allowedStatuses.includes(status)) {
     return res.status(400).json({ message: 'Invalid or missing status' });
   }
 
-  // Auto-generate notes if not provided
   const now = new Date();
-  
-  // Format the date as "YYYY-MM-DD HH:mm"
-  const formattedDate = now.toISOString().slice(0, 16).replace("T", " "); // e.g., "2025-05-04 21:42"
-
+  const formattedDate = now.toISOString().slice(0, 16).replace("T", " ");
   let finalNotes = notes;
 
+  // Auto-generate notes if not provided
   if (!notes) {
-    if (status === 'approved') {
-      finalNotes = `Approved by dentist on ${formattedDate}`;
-    } else if (status === 'declined' || status === 'cancelled') {
-      finalNotes = `Cancelled by dentist on ${formattedDate}. Please reschedule.`;
-    } else if (status === 'rescheduled' && date) {
-      finalNotes = `Rescheduled to ${date}`;
+    switch (status) {
+      case 'approved':
+        finalNotes = `Approved by dentist on ${formattedDate}`;
+        break;
+      case 'cancelled':
+        finalNotes = `Cancelled by dentist on ${formattedDate}. Please reschedule.`;
+        break;
+      case 'rescheduled':
+        if (date) {
+          finalNotes = `Rescheduled to ${date}`;
+        }
+        break;
     }
   }
 
-  // Initialize query components
+  // Build dynamic query
   const setValues = [];
   const queryParams = [];
   let query = 'UPDATE appointment SET ';
 
-  // Set fields to update
   if (status) {
     setValues.push(`status = $${setValues.length + 1}`);
     queryParams.push(status);
@@ -850,30 +847,71 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
     return res.status(400).json({ message: 'No valid fields to update' });
   }
 
-  // Build final SQL query
   query += setValues.join(', ');
   query += ` WHERE idappointment = $${setValues.length + 1} RETURNING *`;
   queryParams.push(id);
 
   try {
     const result = await pool.query(query, queryParams);
-
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Appointment not found.' });
     }
 
+    const updatedAppt = result.rows[0];
+
+    // 🔔 Send appropriate notification
+    const fcmToken = activeTokens.get(updatedAppt.idpatient);
+    if (fcmToken) {
+      const manilaDateStr = new Date(updatedAppt.date).toLocaleString('en-US', {
+        timeZone: 'Asia/Manila',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
+
+      let customTitle = '';
+      let customBody = '';
+
+      switch (status) {
+        case 'approved':
+          customTitle = 'Appointment Confirmed!';
+          customBody = `Your appointment on ${manilaDateStr} has been confirmed. See you soon!`;
+          break;
+        case 'cancelled':
+          customTitle = 'Appointment Cancelled';
+          customBody = `Your appointment on ${manilaDateStr} has been cancelled by the dentist. Please reschedule.`;
+          break;
+        case 'rescheduled':
+          customTitle = 'Appointment Rescheduled';
+          customBody = `Your appointment has been moved to ${manilaDateStr}. Please check the new schedule.`;
+          break;
+      }
+
+      await sendNotificationToUser(fcmToken, updatedAppt, {
+        customTitle,
+        customBody,
+      });
+    } else {
+      console.warn(`⚠️ No FCM token found for patient ${updatedAppt.idpatient}`);
+    }
+
     res.json({
       message: 'Appointment updated successfully',
-      appointment: result.rows[0],
+      appointment: updatedAppt,
     });
+
   } catch (err) {
-    console.error('Error updating appointment:', err.message);
+    console.error('❌ Error updating appointment:', err.message);
     res.status(500).json({
       message: 'Error updating appointment',
       error: err.message,
     });
   }
 });
+
 
 app.put('/api/website/record/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
