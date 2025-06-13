@@ -92,17 +92,17 @@ async function sendNotificationToUser(fcmToken, appt, options = {}) {
       hour12: true,
     });
 
-    await admin.messaging().send({
-      token: fcmToken,
-      data: {
-        appointmentTime: utcDate.toISOString(),
-      },
-      notification: {
-        title: options.customTitle || 'Upcoming appointment',
-        body: options.customBody || `Your appointment is scheduled at ${manilaDateStr}`,
-      },
-    });
-
+  await admin.messaging().send({
+  token: fcmToken,
+  data: {
+    appointmentTime: utcDate.toISOString(),
+  },
+  notification: {
+    title: options.customTitle || 'Upcoming appointment',
+    body: options.customBody || `Your appointment is scheduled at ${manilaDateStr}`,
+    android_channel_id: 'appointment_channel_id', // ✅ match your Flutter channel ID
+  },
+});
     console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`);
   } catch (error) {
     console.error('❌ Error sending notification:', error);
