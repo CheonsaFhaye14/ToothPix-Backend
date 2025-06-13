@@ -219,6 +219,55 @@ app.post("/api/app/register", async (req, res) => {
 });
 
 
+// GET /api/fullreport
+app.get('/api/fullreport', async (req, res) => {
+  const { status, dentist, date } = req.query;
+
+  let query = `
+    SELECT
+      a.idappointment AS id,
+      CONCAT(p.firstname, ' ', p.lastname) AS patient,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist,
+      a.status,
+      a.date,
+      r.paymentstatus,
+      r.total_paid,
+      s.name AS service,
+      s.price AS service_price
+    FROM appointment a
+    JOIN users p ON a.idpatient = p.idusers
+    JOIN users d ON a.iddentist = d.idusers
+    LEFT JOIN records r ON a.idappointment = r.idappointment
+    LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment
+    LEFT JOIN service s ON aps.idservice = s.idservice
+    WHERE 1=1
+  `;
+
+  const params = [];
+
+  if (status) {
+    query += ` AND a.status ILIKE $${params.length + 1}`;
+    params.push(`%${status}%`);
+  }
+  if (dentist) {
+    query += ` AND CONCAT(d.firstname, ' ', d.lastname) ILIKE $${params.length + 1}`;
+    params.push(`%${dentist}%`);
+  }
+  if (date) {
+    query += ` AND DATE(a.date) = $${params.length + 1}`;
+    params.push(date);
+  }
+
+  query += ` ORDER BY a.date DESC`;
+
+  try {
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching report data:', err);
+    res.status(500).json({ error: 'Failed to fetch report data' });
+  }
+});
 
 
 //  for logging in
