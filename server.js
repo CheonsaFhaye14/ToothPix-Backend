@@ -2259,10 +2259,10 @@ app.post('/api/app/services', async (req, res) => {
       message: 'Service added successfully',
       service,
     });
-  } catch (err) {
-    console.error('❌ Error adding service:', err.message);
-    res.status(500).json({ message: 'Error adding service', error: err.message });
-  }
+  } } catch (err) {
+  console.error('❌ Error adding service:', err.stack); // <- Use stack instead of just message
+  res.status(500).json({ message: 'Error adding service', error: err.message });
+}
 });
 
 
