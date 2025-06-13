@@ -478,17 +478,62 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
 });
 
 
-cron.schedule('*/5 * * * *', async () => { // every 5 minutes
+cron.schedule('*/5 * * * *', async () => {
+  const client = await pool.connect();
+
   try {
-    await pool.query(`
-      UPDATE appointment
-      SET status = 'completed'
+    await client.query('BEGIN');
+
+    // 1. Get appointments to update
+    const res = await client.query(`
+      SELECT idappointment, idpatient, iddentist
+      FROM appointment
       WHERE date < NOW()
         AND status NOT IN ('cancelled', 'completed')
     `);
-    console.log('Appointment statuses updated.');
+
+    const appointmentsToComplete = res.rows;
+
+    if (appointmentsToComplete.length === 0) {
+      console.log('No appointments to update.');
+      await client.query('COMMIT');
+      return;
+    }
+
+    // 2. Update their statuses to 'completed'
+    const idsToUpdate = appointmentsToComplete.map(a => a.idappointment);
+    await client.query(
+      `UPDATE appointment SET status = 'completed' WHERE idappointment = ANY($1::int[])`,
+      [idsToUpdate]
+    );
+
+    // 3. Insert records if they don't already exist
+    for (const appt of appointmentsToComplete) {
+      const { idappointment, idpatient, iddentist } = appt;
+
+      // Avoid inserting duplicate records
+      const existing = await client.query(
+        `SELECT 1 FROM records WHERE idappointment = $1 LIMIT 1`,
+        [idappointment]
+      );
+
+      if (existing.rowCount === 0) {
+        await client.query(
+          `INSERT INTO records (idappointment, idpatient, iddentist, paymentstatus, total_paid)
+           VALUES ($1, $2, $3, 'unpaid', 0)`,
+          [idappointment, idpatient, iddentist]
+        );
+        console.log(`Inserted record for appointment ID ${idappointment}`);
+      }
+    }
+
+    await client.query('COMMIT');
+    console.log('Appointment statuses and records updated.');
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Scheduled update failed:', err.message);
+  } finally {
+    client.release();
   }
 });
 
