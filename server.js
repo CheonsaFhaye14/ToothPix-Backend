@@ -860,7 +860,12 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
     const updatedAppt = result.rows[0];
 
     // ✅ Send FCM notification if patient is logged in
-    const fcmToken = activeTokens.get(updatedAppt.idpatient);
+   const userResult = await pool.query(
+  'SELECT fcm_token FROM users WHERE idusers = $1',
+  [updatedAppt.idpatient]
+);
+const fcmToken = userResult.rows[0]?.fcm_token;
+
     if (fcmToken) {
       const manilaDateStr = new Date(updatedAppt.date).toLocaleString('en-US', {
         timeZone: 'Asia/Manila',
