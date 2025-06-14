@@ -116,10 +116,11 @@ async function sendNotificationToUser(fcmToken, appt, options = {}) {
 
 // Get appointments within 1-minute window of target dates
 async function getAppointmentsAtTimes(targetDates) {
-const windowDuration = 5 * 60 * 1000; // 5 minutes
+ 
+ const windowDuration = 30 * 1000; // 30 seconds
 
 const timeWindows = targetDates.map(date => {
-  const start = new Date(date.getTime());
+  const start = new Date(date.getTime() - windowDuration);
   const end = new Date(date.getTime() + windowDuration);
   return { start, end };
 });
