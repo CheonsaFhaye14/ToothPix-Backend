@@ -483,11 +483,9 @@ app.get('/api/website/admindashboard', async (req, res) => {
   }
 });
 
-
 app.post('/api/website/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
 
-  // Validate required fields
   if ((!idpatient && !patient_name) || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
     return res.status(400).json({
       message: 'If idpatient is not provided, patient_name is required. Also, iddentist, date, and idservice array are required.'
@@ -498,7 +496,6 @@ app.post('/api/website/appointments', async (req, res) => {
     let insertQuery, insertValues;
 
     if (idpatient) {
-      // For registered users
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes)
         VALUES ($1, $2, $3, $4, $5)
@@ -506,7 +503,6 @@ app.post('/api/website/appointments', async (req, res) => {
       `;
       insertValues = [idpatient, iddentist, date, status || 'pending', notes || ''];
     } else {
-      // For non-users / walk-ins
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes, patient_name)
         VALUES (NULL, $1, $2, $3, $4, $5)
@@ -528,16 +524,46 @@ app.post('/api/website/appointments', async (req, res) => {
     });
     await Promise.all(serviceInsertPromises);
 
+    // 🛎 Send notifications
+    const utcDate = new Date(appointment.date);
+
+    // Helper to get token and send
+    const notify = async (id, role) => {
+      const { rows } = await pool.query(`SELECT fcm_token FROM users WHERE idusers = $1`, [id]);
+      const token = rows[0]?.fcm_token;
+      if (token) {
+        await sendNotificationToUser(token, appointment, {
+          customTitle: `📅 New Appointment`,
+          customBody: `You have a new appointment on ${utcDate.toLocaleString('en-US', {
+            timeZone: 'Asia/Manila',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          })}`,
+        });
+      } else {
+        console.warn(`⚠️ No FCM token found for ${role} with id ${id}`);
+      }
+    };
+
+    if (idpatient) await notify(idpatient, 'patient');
+    await notify(iddentist, 'dentist');
+
     res.status(201).json({
-      message: 'Appointment created successfully',
+      message: 'Appointment created and notifications sent successfully',
       appointment,
     });
 
   } catch (err) {
-    console.error('Error creating appointment:', err.message);
+    console.error('❌ Error creating appointment:', err.message);
     res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
+
+
 app.get('/api/website/report/patients', async (req, res) => {
   try {
     const query = `
