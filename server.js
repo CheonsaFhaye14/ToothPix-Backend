@@ -452,37 +452,34 @@ app.get('/api/website/admindashboard', async (req, res) => {
     ),
     top_dentists AS (
       SELECT 
-        r.iddentist,
+        a.iddentist,
         CONCAT(u.firstname, ' ', u.lastname) AS fullname,
-        COUNT(DISTINCT r.idpatient) AS total_patients
-      FROM records r
-      JOIN users u ON u.idusers = r.iddentist
-      GROUP BY r.iddentist, fullname
-      ORDER BY total_patients DESC
+        COUNT(*) AS completed_appointments
+      FROM appointment a
+      JOIN users u ON u.idusers = a.iddentist
+      WHERE a.status = 'completed'
+      GROUP BY a.iddentist, fullname
+      ORDER BY completed_appointments DESC
       LIMIT 3
     ),
-   recent_completed AS (
-  SELECT 
-    a.idappointment,
-    a.date,
-    CONCAT(p.firstname, ' ', p.lastname) AS patient,
-    CONCAT(d.firstname, ' ', d.lastname) AS dentist,
-    a.status
-  FROM appointment a
-  LEFT JOIN users p ON a.idpatient = p.idusers
-  LEFT JOIN users d ON a.iddentist = d.idusers
-  WHERE a.status = 'completed'
-  ORDER BY a.date DESC, a.idappointment DESC
-  LIMIT 3
-)
-
+    monthly_sales AS (
+      SELECT 
+        TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM') AS month,
+        SUM(r.total_paid) AS total_sales
+      FROM records r
+      JOIN appointment a ON a.idappointment = r.idappointment
+      WHERE r.paymentstatus IN ('paid', 'partial')
+      GROUP BY month
+      ORDER BY month DESC
+      LIMIT 12
+    )
 
     SELECT 
       (SELECT total FROM appointments_today) AS totalAppointmentsToday,
       (SELECT total_earnings FROM this_month_earnings) AS thisMonthEarnings,
       (SELECT JSON_AGG(ts) FROM top_services ts) AS topServices,
       (SELECT JSON_AGG(td) FROM top_dentists td) AS topDentists,
-      (SELECT JSON_AGG(rc) FROM recent_completed rc) AS recentAppointments;
+      (SELECT JSON_AGG(ms) FROM monthly_sales ms) AS monthlySales;
   `;
 
   try {
@@ -499,7 +496,7 @@ app.get('/api/website/admindashboard', async (req, res) => {
       thisMonthEarnings: parseFloat(row.thismonthearnings) || 0,
       topServices: row.topservices || [],
       topDentists: row.topdentists || [],
-      recentAppointments: row.recentappointments || [],
+      monthlySales: row.monthlysales || [],
     });
   } catch (err) {
     console.error('Error fetching admin dashboard data:', err.message);
