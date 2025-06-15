@@ -2313,7 +2313,8 @@ app.post('/api/app/services', async (req, res) => {
 
     for (let i = 0; i < tokens.length; i += MAX_BATCH) {
       const batch = tokens.slice(i, i + MAX_BATCH);
-      const response = await admin.messaging().sendToDevice(batch, notification);
+     const response = await admin.messaging.sendToDevice(batch, notification);
+
 
 
       totalSuccess += response.successCount;
