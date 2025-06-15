@@ -431,21 +431,29 @@ app.get('/api/website/admindashboard', async (req, res) => {
     appointments_today AS (
       SELECT COUNT(*) AS total
       FROM appointment
-      WHERE DATE(date) = CURRENT_DATE
+      WHERE DATE(date AT TIME ZONE 'Asia/Manila') = CURRENT_DATE
     ),
-    total_unpaid AS (
+    this_month_earnings AS (
       SELECT 
-        SUM(
-          COALESCE(
-            (
-              SELECT SUM(s.price)
-              FROM appointment_services aps
-              JOIN service s ON aps.idservice = s.idservice
-              WHERE aps.idappointment = r.idappointment
-            ), 0
-          ) - COALESCE(r.total_paid, 0)
-        ) AS unpaid_total
+        SUM(s.price) AS total_earnings
       FROM records r
+      JOIN appointment_services aps ON r.idappointment = aps.idappointment
+      JOIN service s ON aps.idservice = s.idservice
+      WHERE r.paymentstatus = 'paid'
+        AND r.idappointment IN (
+          SELECT idappointment FROM appointment
+          WHERE DATE_TRUNC('month', date AT TIME ZONE 'Asia/Manila') = DATE_TRUNC('month', CURRENT_DATE)
+        )
+    ),
+    top_services AS (
+      SELECT 
+        s.name,
+        COUNT(*) AS usage_count
+      FROM appointment_services aps
+      JOIN service s ON aps.idservice = s.idservice
+      GROUP BY s.name
+      ORDER BY usage_count DESC
+      LIMIT 3
     ),
     top_dentists AS (
       SELECT 
@@ -470,15 +478,16 @@ app.get('/api/website/admindashboard', async (req, res) => {
       LEFT JOIN users d ON a.iddentist = d.idusers
       WHERE a.status = 'completed'
       ORDER BY a.date DESC
-      LIMIT 5
+      LIMIT 3
     )
 
     SELECT 
       (SELECT total FROM appointments_today) AS totalAppointmentsToday,
-      (SELECT unpaid_total FROM total_unpaid) AS totalUnpaidBalance,
-      JSON_AGG(t) AS topDentists,
-      (SELECT JSON_AGG(r) FROM recent_completed r) AS recentAppointments
-    FROM top_dentists t;
+      (SELECT total_earnings FROM this_month_earnings) AS thisMonthEarnings,
+      (SELECT JSON_AGG(ts) FROM top_services ts) AS topServices,
+      JSON_AGG(td) AS topDentists,
+      (SELECT JSON_AGG(rc) FROM recent_completed rc) AS recentAppointments
+    FROM top_dentists td;
   `;
 
   try {
@@ -492,15 +501,17 @@ app.get('/api/website/admindashboard', async (req, res) => {
 
     res.status(200).json({
       totalAppointmentsToday: row.totalappointmentstoday,
-      totalUnpaidBalance: row.totalunpaidbalance,
-      topDentists: row.topdentists,
-      recentAppointments: row.recentappointments,
+      thisMonthEarnings: parseFloat(row.thismonthearnings) || 0,
+      topServices: row.topservices || [],
+      topDentists: row.topdentists || [],
+      recentAppointments: row.recentappointments || [],
     });
   } catch (err) {
     console.error('Error fetching admin dashboard data:', err.message);
     res.status(500).json({ message: 'Error fetching admin dashboard', error: err.message });
   }
 });
+
 
 app.post('/api/website/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
