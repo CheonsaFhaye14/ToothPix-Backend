@@ -2242,54 +2242,58 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 app.post('/api/app/services', async (req, res) => {
   const { name, description, price, category } = req.body;
 
-  // 🔎 Input validation
+  // 🔍 Validate input
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
+
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
+
   if (!category || typeof category !== 'string' || category.trim().length === 0) {
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
   }
 
-  console.log('📥 Received service data:', { name, description, price, category });
-
-  const insertQuery = `
-    INSERT INTO service (name, description, price, category)
-    VALUES ($1, $2, $3, $4)
-    RETURNING idservice, name, description, price, category
-  `;
-
   try {
-    // 📌 Insert service into DB
+    // 📌 Insert new service into DB
+    const insertQuery = `
+      INSERT INTO service (name, description, price, category)
+      VALUES ($1, $2, $3, $4)
+      RETURNING idservice, name, description, price, category
+    `;
     const result = await pool.query(insertQuery, [
       name.trim(),
-      description ?? null,
+      description || null,
       parseFloat(price),
       category.trim()
     ]);
+
     const service = result.rows[0];
+    console.log('✅ Service added:', service);
 
-    console.log('✅ Service added to DB:', service);
-
-    // 🔔 Get all valid FCM tokens
+    // 🔔 Fetch all valid FCM tokens
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
     const tokens = tokensResult.rows
       .map(row => row.fcm_token)
       .filter(token => typeof token === 'string' && token.trim().length > 0);
 
     if (tokens.length === 0) {
-      console.log('⚠️ No valid FCM tokens found.');
-      return res.status(201).json({ message: 'Service added successfully', service, notificationSent: false });
+      console.log('⚠️ No users with FCM tokens.');
+      return res.status(201).json({
+        message: 'Service added successfully',
+        service,
+        notificationSent: false,
+        totalRecipients: 0,
+        successfulNotifications: 0,
+      });
     }
 
-    // 🔄 Batch and send notifications (max 500 tokens per multicast request)
-    const MAX_BATCH = 500;
+    // 📲 Prepare FCM notification payload
     const notification = {
       notification: {
-        title: '🦷 New Service Available',
-        body: `${service.name} has been added to our dental services!`,
+        title: '🦷 New Dental Service Available',
+        body: `${service.name} has been added to our services list!`,
       },
       data: {
         serviceId: service.idservice.toString(),
@@ -2303,15 +2307,18 @@ app.post('/api/app/services', async (req, res) => {
       },
     };
 
+    // 📦 Send in batches (max 500 tokens per multicast)
+    const MAX_BATCH = 500;
     let totalSuccess = 0;
+
     for (let i = 0; i < tokens.length; i += MAX_BATCH) {
       const batch = tokens.slice(i, i + MAX_BATCH);
       const response = await admin.messaging().sendMulticast({ ...notification, tokens: batch });
 
       totalSuccess += response.successCount;
       console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes.`);
-      
-      // Optional: Log failed tokens
+
+      // Optional: log failed deliveries
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
           console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
@@ -2319,8 +2326,9 @@ app.post('/api/app/services', async (req, res) => {
       });
     }
 
+    // ✅ Return response
     res.status(201).json({
-      message: 'Service added successfully',
+      message: 'Service added and notifications sent successfully',
       service,
       notificationSent: true,
       totalRecipients: tokens.length,
@@ -2328,11 +2336,13 @@ app.post('/api/app/services', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Error in service creation or notification:', err.stack);
-    res.status(500).json({ message: 'Error adding service or sending notifications', error: err.message });
+    console.error('❌ Error adding service or sending notifications:', err.stack);
+    res.status(500).json({
+      message: 'Failed to add service or notify users',
+      error: err.message
+    });
   }
 });
-
 
 
 // Get all services route
