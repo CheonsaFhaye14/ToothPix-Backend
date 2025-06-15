@@ -340,6 +340,40 @@ app.get('/api/admin', async (req, res) => {
   }
 });
 
+app.get('/api/website/appointments/report', async (req, res) => {
+  const query = `
+    SELECT 
+      a.idappointment,
+      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+      TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH12:MI AM') AS formatted_date,
+      a.status,
+      a.notes,
+      STRING_AGG(s.name, ', ') AS services
+    FROM appointment a
+    LEFT JOIN users p ON a.idpatient = p.idusers
+    LEFT JOIN users d ON a.iddentist = d.idusers
+    LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
+    LEFT JOIN service s ON aps.idservice = s.idservice
+    GROUP BY a.idappointment, patient_name, dentist_name, a.date, a.status, a.notes
+    ORDER BY a.idappointment;
+  `;
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
+    }
+
+    res.status(200).json({
+      records: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching appointments:', err.message);
+    res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+  }
+});
 
 app.post('/api/app/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
