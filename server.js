@@ -339,44 +339,57 @@ app.get('/api/admin', async (req, res) => {
     res.status(500).json({ message: 'Error fetching admin', error: err.message });
   }
 });
+
+
 app.post('/api/app/appointments', async (req, res) => {
-  const { idpatient, iddentist, date, status, notes, idservice } = req.body;
+  const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
 
   // Validate required fields
-  if (!idpatient || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
-    return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice array are required.' });
+  if ((!idpatient && !patient_name) || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    return res.status(400).json({
+      message: 'If idpatient is not provided, patient_name is required. Also, iddentist, date, and idservice array are required.'
+    });
   }
 
   try {
-    // 1. Insert the appointment (without services yet)
-    const appointmentInsertQuery = `
-      INSERT INTO appointment (idpatient, iddentist, date, status, notes)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING idappointment, idpatient, iddentist, date, status, notes
-    `;
-    const appointmentResult = await pool.query(appointmentInsertQuery, [
-      idpatient,
-      iddentist,
-      date,
-      status || 'pending',
-      notes || '',
-    ]);
+    let insertQuery, insertValues;
+
+    if (idpatient) {
+      // For registered users
+      insertQuery = `
+        INSERT INTO appointment (idpatient, iddentist, date, status, notes)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING idappointment, idpatient, iddentist, date, status, notes, NULL AS patient_name
+      `;
+      insertValues = [idpatient, iddentist, date, status || 'pending', notes || ''];
+    } else {
+      // For walk-ins
+      insertQuery = `
+        INSERT INTO appointment (idpatient, iddentist, date, status, notes, patient_name)
+        VALUES (NULL, $1, $2, $3, $4, $5)
+        RETURNING idappointment, idpatient, iddentist, date, status, notes, patient_name
+      `;
+      insertValues = [iddentist, date, status || 'pending', notes || '', patient_name];
+    }
+
+    const appointmentResult = await pool.query(insertQuery, insertValues);
     const appointment = appointmentResult.rows[0];
 
-    // 2. Insert related services
+    // Insert services
     const serviceInsertPromises = idservice.map(serviceId => {
-      const insertQuery = `
+      const insertServiceQuery = `
         INSERT INTO appointment_services (idappointment, idservice)
         VALUES ($1, $2)
       `;
-      return pool.query(insertQuery, [appointment.idappointment, serviceId]);
+      return pool.query(insertServiceQuery, [appointment.idappointment, serviceId]);
     });
     await Promise.all(serviceInsertPromises);
 
-    // 3. Send notification to the dentist
+    // Send notification to dentist only
     try {
-      const appointmentDate = new Date(appointment.date);
-      const formattedDate = appointmentDate.toLocaleString('en-US', {
+      const utcDate = new Date(appointment.date);
+      const formatted = utcDate.toLocaleString('en-US', {
+        timeZone: 'Asia/Manila',
         month: 'long',
         day: 'numeric',
         year: 'numeric',
@@ -385,26 +398,32 @@ app.post('/api/app/appointments', async (req, res) => {
         hour12: true,
       });
 
-      const notifTitle = 'New Appointment Request';
-      const notifBody = `A patient has requested an appointment on ${formattedDate}. Please review, approve, reschedule, or cancel it.`;
+      const { rows } = await pool.query(`SELECT fcm_token FROM users WHERE idusers = $1`, [iddentist]);
+      const dentistToken = rows[0]?.fcm_token;
 
-      await sendNotificationToDentist(iddentist, notifTitle, notifBody);
+      if (dentistToken) {
+        await sendNotificationToUser(dentistToken, appointment, {
+          customTitle: '📥 New Appointment Request',
+          customBody: `A patient has requested an appointment on ${formatted}.`,
+        });
+      } else {
+        console.warn(`⚠️ No FCM token found for dentist with id ${iddentist}`);
+      }
     } catch (notifErr) {
-      console.error('Failed to send notification to dentist:', notifErr.message);
-      // Note: Do not fail the whole API request because of a notification failure
+      console.error('❌ Failed to send notification to dentist:', notifErr.message);
     }
 
-    // 4. Respond with appointment data
     res.status(201).json({
       message: 'Appointment created successfully',
       appointment,
     });
 
   } catch (err) {
-    console.error('Error creating appointment:', err.message);
+    console.error('❌ Error creating appointment:', err.message);
     res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
+
 
 app.get('/api/website/admindashboard', async (req, res) => {
   const query = `
