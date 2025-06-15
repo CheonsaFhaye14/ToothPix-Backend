@@ -461,20 +461,21 @@ app.get('/api/website/admindashboard', async (req, res) => {
       ORDER BY total_patients DESC
       LIMIT 3
     ),
-    recent_completed AS (
-      SELECT 
-        a.idappointment,
-        a.date,
-        CONCAT(p.firstname, ' ', p.lastname) AS patient,
-        CONCAT(d.firstname, ' ', d.lastname) AS dentist,
-        a.status
-      FROM appointment a
-      LEFT JOIN users p ON a.idpatient = p.idusers
-      LEFT JOIN users d ON a.iddentist = d.idusers
-      WHERE a.status = 'completed'
-      ORDER BY a.date DESC
-      LIMIT 3
-    )
+   recent_completed AS (
+  SELECT 
+    a.idappointment,
+    a.date,
+    CONCAT(p.firstname, ' ', p.lastname) AS patient,
+    CONCAT(d.firstname, ' ', d.lastname) AS dentist,
+    a.status
+  FROM appointment a
+  LEFT JOIN users p ON a.idpatient = p.idusers
+  LEFT JOIN users d ON a.iddentist = d.idusers
+  WHERE a.status = 'completed'
+  ORDER BY a.date DESC, a.idappointment DESC
+  LIMIT 3
+)
+
 
     SELECT 
       (SELECT total FROM appointments_today) AS totalAppointmentsToday,
