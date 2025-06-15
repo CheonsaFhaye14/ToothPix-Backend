@@ -339,32 +339,62 @@ app.get('/api/admin', async (req, res) => {
     res.status(500).json({ message: 'Error fetching admin', error: err.message });
   }
 });
-
 app.post('/api/app/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice } = req.body;
 
+  // Validate required fields
   if (!idpatient || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
     return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice array are required.' });
   }
 
   try {
-    // 1. Insert appointment without services first
+    // 1. Insert the appointment (without services yet)
     const appointmentInsertQuery = `
       INSERT INTO appointment (idpatient, iddentist, date, status, notes)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING idappointment, idpatient, iddentist, date, status, notes
     `;
-    const appointmentResult = await pool.query(appointmentInsertQuery, [idpatient, iddentist, date, status || 'pending', notes || '']);
+    const appointmentResult = await pool.query(appointmentInsertQuery, [
+      idpatient,
+      iddentist,
+      date,
+      status || 'pending',
+      notes || '',
+    ]);
     const appointment = appointmentResult.rows[0];
 
-    // 2. Insert into appointment_services for each service ID
+    // 2. Insert related services
     const serviceInsertPromises = idservice.map(serviceId => {
-      const insertQuery = `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`;
+      const insertQuery = `
+        INSERT INTO appointment_services (idappointment, idservice)
+        VALUES ($1, $2)
+      `;
       return pool.query(insertQuery, [appointment.idappointment, serviceId]);
     });
     await Promise.all(serviceInsertPromises);
 
-    // 3. Return success with appointment info (you might want to add services on response later)
+    // 3. Send notification to the dentist
+    try {
+      const appointmentDate = new Date(appointment.date);
+      const formattedDate = appointmentDate.toLocaleString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
+
+      const notifTitle = 'New Appointment Request';
+      const notifBody = `A patient has requested an appointment on ${formattedDate}. Please review, approve, reschedule, or cancel it.`;
+
+      await sendNotificationToDentist(iddentist, notifTitle, notifBody);
+    } catch (notifErr) {
+      console.error('Failed to send notification to dentist:', notifErr.message);
+      // Note: Do not fail the whole API request because of a notification failure
+    }
+
+    // 4. Respond with appointment data
     res.status(201).json({
       message: 'Appointment created successfully',
       appointment,
