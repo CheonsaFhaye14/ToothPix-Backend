@@ -450,18 +450,18 @@ app.get('/api/website/admindashboard', async (req, res) => {
       ORDER BY usage_count DESC
       LIMIT 3
     ),
-    top_dentists AS (
-      SELECT 
-        a.iddentist,
-        CONCAT(u.firstname, ' ', u.lastname) AS fullname,
-        COUNT(*) AS completed_appointments
-      FROM appointment a
-      JOIN users u ON u.idusers = a.iddentist
-      WHERE a.status = 'completed'
-      GROUP BY a.iddentist, fullname
-      ORDER BY completed_appointments DESC
-      LIMIT 3
-    ),
+  top_dentists AS (
+  SELECT 
+    a.iddentist,
+    CONCAT(u.firstname, ' ', u.lastname) AS fullname,
+    COUNT(*) AS patients_helped
+  FROM appointment a
+  JOIN users u ON u.idusers = a.iddentist
+  WHERE a.status = 'completed'
+  GROUP BY a.iddentist, fullname
+  ORDER BY patients_helped DESC
+  LIMIT 3
+),
     monthly_sales AS (
       SELECT 
         TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM') AS month,
