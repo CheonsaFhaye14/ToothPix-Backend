@@ -2239,10 +2239,10 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
     res.status(500).json({ message: 'Error updating profile' });
   }
 });
+
 app.post('/api/app/services', async (req, res) => {
   const { name, description, price, category } = req.body;
 
-  // 🔍 Validate input
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
@@ -2256,7 +2256,6 @@ app.post('/api/app/services', async (req, res) => {
   }
 
   try {
-    // 📌 Insert new service into DB
     const insertQuery = `
       INSERT INTO service (name, description, price, category)
       VALUES ($1, $2, $3, $4)
@@ -2272,7 +2271,6 @@ app.post('/api/app/services', async (req, res) => {
     const service = result.rows[0];
     console.log('✅ Service added:', service);
 
-    // 🔔 Fetch all valid FCM tokens
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
     const tokens = tokensResult.rows
       .map(row => row.fcm_token)
@@ -2289,8 +2287,7 @@ app.post('/api/app/services', async (req, res) => {
       });
     }
 
-    // 📲 Prepare FCM notification payload
-    const notification = {
+    const notificationPayload = {
       notification: {
         title: '🦷 New Dental Service Available',
         body: `${service.name} has been added to our services list!`,
@@ -2304,23 +2301,25 @@ app.post('/api/app/services', async (req, res) => {
           channelId: 'appointment_channel_id',
           priority: 'high',
         },
-      },
+      }
     };
 
-    // 📦 Send in batches (max 500 tokens per multicast)
     const MAX_BATCH = 500;
     let totalSuccess = 0;
 
     for (let i = 0; i < tokens.length; i += MAX_BATCH) {
       const batch = tokens.slice(i, i + MAX_BATCH);
-     const response = await admin.messaging.sendToDevice(batch, notification);
 
+      const multicastMessage = {
+        tokens: batch,
+        ...notificationPayload,
+      };
 
+      const response = await admin.messaging().sendEachForMulticast(multicastMessage);
 
       totalSuccess += response.successCount;
       console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes.`);
 
-      // Optional: log failed deliveries
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
           console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
@@ -2328,7 +2327,6 @@ app.post('/api/app/services', async (req, res) => {
       });
     }
 
-    // ✅ Return response
     res.status(201).json({
       message: 'Service added and notifications sent successfully',
       service,
@@ -2345,6 +2343,7 @@ app.post('/api/app/services', async (req, res) => {
     });
   }
 });
+
 
 
 // Get all services route
