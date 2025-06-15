@@ -424,7 +424,6 @@ app.post('/api/app/appointments', async (req, res) => {
   }
 });
 
-
 app.get('/api/website/admindashboard', async (req, res) => {
   const query = `
     WITH 
@@ -435,15 +434,11 @@ app.get('/api/website/admindashboard', async (req, res) => {
     ),
     this_month_earnings AS (
       SELECT 
-        SUM(s.price) AS total_earnings
+        SUM(r.total_paid) AS total_earnings
       FROM records r
-      JOIN appointment_services aps ON r.idappointment = aps.idappointment
-      JOIN service s ON aps.idservice = s.idservice
-      WHERE r.paymentstatus = 'paid'
-        AND r.idappointment IN (
-          SELECT idappointment FROM appointment
-          WHERE DATE_TRUNC('month', date AT TIME ZONE 'Asia/Manila') = DATE_TRUNC('month', CURRENT_DATE)
-        )
+      JOIN appointment a ON a.idappointment = r.idappointment
+      WHERE r.paymentstatus IN ('paid', 'partial')
+        AND DATE_TRUNC('month', a.date AT TIME ZONE 'Asia/Manila') = DATE_TRUNC('month', CURRENT_DATE)
     ),
     top_services AS (
       SELECT 
@@ -485,9 +480,8 @@ app.get('/api/website/admindashboard', async (req, res) => {
       (SELECT total FROM appointments_today) AS totalAppointmentsToday,
       (SELECT total_earnings FROM this_month_earnings) AS thisMonthEarnings,
       (SELECT JSON_AGG(ts) FROM top_services ts) AS topServices,
-      JSON_AGG(td) AS topDentists,
-      (SELECT JSON_AGG(rc) FROM recent_completed rc) AS recentAppointments
-    FROM top_dentists td;
+      (SELECT JSON_AGG(td) FROM top_dentists td) AS topDentists,
+      (SELECT JSON_AGG(rc) FROM recent_completed rc) AS recentAppointments;
   `;
 
   try {
