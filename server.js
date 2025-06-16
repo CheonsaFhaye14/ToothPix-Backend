@@ -295,7 +295,8 @@ app.get('/api/reports/top-services', async (req, res) => {
   COALESCE(SUM(s.price), 0) AS total_revenue
 FROM service s
 LEFT JOIN appointment_services aps ON s.idservice = aps.idservice
-LEFT JOIN appointment a ON a.idappointment = aps.idappointment AND a.status != 'cancelled'
+LEFT JOIN appointment a ON a.idappointment = aps.idappointment AND a.status = 'completed'
+
 LEFT JOIN records r ON r.idappointment = a.idappointment
 GROUP BY s.name
 ORDER BY usage_count DESC;
