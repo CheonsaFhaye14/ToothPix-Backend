@@ -291,10 +291,10 @@ app.get('/api/reports/today-appointments', async (req, res) => {
     LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
     LEFT JOIN service s ON s.idservice = aps.idservice
     WHERE DATE(a.date AT TIME ZONE 'Asia/Manila') = CURRENT_DATE
+    GROUP BY a.idappointment, a.date, u.firstname, u.lastname, a.patient_name
     ORDER BY 
       to_char(a.date AT TIME ZONE 'Asia/Manila', 'HH24:MI') ASC,
       a.idappointment ASC
-    GROUP BY a.idappointment, a.date, u.firstname, u.lastname, a.patient_name
   `;
 
   try {
