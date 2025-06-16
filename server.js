@@ -960,21 +960,19 @@ app.post('/api/website/record', async (req, res) => {
       );
     }
 
-    // 3. Insert record if treatment_notes provided
-    if (treatment_notes !== undefined && treatment_notes.trim() !== '') {
-      const apptDetails = await pool.query(
-        `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
-        [idappointment]
-      );
+    // 3. Insert record (always, even if treatment_notes is empty)
+    const apptDetails = await pool.query(
+      `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
+      [idappointment]
+    );
 
-      const { idpatient: patientIdFromAppt, iddentist: dentistIdFromAppt } = apptDetails.rows[0];
+    const { idpatient: patientIdFromAppt, iddentist: dentistIdFromAppt } = apptDetails.rows[0];
 
-      await pool.query(
-        `INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes)
-         VALUES ($1, $2, $3, $4)`,
-        [patientIdFromAppt, dentistIdFromAppt, idappointment, treatment_notes]
-      );
-    }
+    await pool.query(
+      `INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, paymentstatus, total_paid)
+       VALUES ($1, $2, $3, $4, 'unpaid', 0)`,
+      [patientIdFromAppt, dentistIdFromAppt, idappointment, treatment_notes?.trim() || '']
+    );
 
     await pool.query('COMMIT');
     res.status(201).json({ message: 'Appointment and record created successfully.', idappointment });
@@ -985,6 +983,7 @@ app.post('/api/website/record', async (req, res) => {
     res.status(500).json({ message: 'Failed to create appointment and record.', error: error.message });
   }
 });
+
 app.put('/api/app/appointmentstatus/:id', async (req, res) => {
   const id = req.params.id;
   const { status, notes, date } = req.body;
