@@ -280,6 +280,42 @@ app.get('/api/reports/records', async (req, res) => {
   }
 });
 
+app.get('/api/reports/top-services', async (req, res) => {
+  const query = `
+    SELECT 
+      s.name AS service_name,
+      COUNT(aps.idappointment) AS usage_count,
+      COUNT(DISTINCT a.idappointment) AS unique_appointments,
+      COUNT(DISTINCT 
+        CASE 
+          WHEN a.idpatient IS NOT NULL THEN a.idpatient
+          ELSE a.patient_name
+        END
+      ) AS unique_patients,
+      SUM(s.price) AS total_revenue
+    FROM appointment_services aps
+    JOIN service s ON s.idservice = aps.idservice
+    JOIN appointment a ON a.idappointment = aps.idappointment
+    LEFT JOIN users p ON p.idusers = a.idpatient
+    JOIN records r ON r.idappointment = a.idappointment
+    WHERE a.status != 'cancelled'
+    GROUP BY s.name
+    ORDER BY usage_count DESC;
+  `;
+
+  try {
+    const result = await pool.query(query);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No service usage data found' });
+    }
+
+    res.status(200).json({ topServices: result.rows });
+  } catch (err) {
+    console.error('Error fetching top services report:', err.message);
+    res.status(500).json({ message: 'Error fetching top services report', error: err.message });
+  }
+});
+
 
 app.post("/api/app/register", async (req, res) => {
   const { username, email, password, usertype, firstname, lastname } = req.body;
