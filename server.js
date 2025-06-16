@@ -279,6 +279,32 @@ app.get('/api/reports/records', async (req, res) => {
     res.status(500).json({ message: 'Error fetching record report', error: err.message });
   }
 });
+app.get('/api/reports/today-appointments', async (req, res) => {
+  const query = `
+    SELECT 
+      a.idappointment,
+      to_char(a.date AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS time,
+      COALESCE(u.firstname || ' ' || u.lastname, a.patient_name) AS patient_name,
+      STRING_AGG(s.name, ', ') AS services
+    FROM appointment a
+    LEFT JOIN users u ON u.idusers = a.idpatient
+    LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
+    LEFT JOIN service s ON s.idservice = aps.idservice
+    WHERE DATE(a.date AT TIME ZONE 'Asia/Manila') = CURRENT_DATE
+    ORDER BY 
+      to_char(a.date AT TIME ZONE 'Asia/Manila', 'HH24:MI') ASC,
+      a.idappointment ASC
+    GROUP BY a.idappointment, a.date, u.firstname, u.lastname, a.patient_name
+  `;
+
+  try {
+    const result = await pool.query(query);
+    res.status(200).json({ appointmentsToday: result.rows });
+  } catch (err) {
+    console.error('Error fetching today appointments report:', err.message);
+    res.status(500).json({ message: 'Error fetching today appointments', error: err.message });
+  }
+});
 
 app.get('/api/reports/top-services', async (req, res) => {
   const query = `
