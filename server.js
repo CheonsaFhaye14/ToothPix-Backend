@@ -177,23 +177,29 @@ cron.schedule('* * * * *', async () => {
 
 app.get('/api/reports/payments', async (req, res) => {
   const query = `
-    SELECT 
-      r.idrecord,
-      CONCAT(u.firstname, ' ', u.lastname) AS patient_name,
-      a.date AS appointment_date,
-      STRING_AGG(s.name, ', ') AS services,
-      SUM(s.price) AS total_cost,
-      r.total_paid,
-      (SUM(s.price) - r.total_paid) AS balance,
-      r.paymentstatus
-    FROM records r
-    JOIN users u ON u.idusers = r.idpatient
-    JOIN appointment a ON a.idappointment = r.idappointment
-    JOIN appointment_services aps ON aps.idappointment = a.idappointment
-    JOIN service s ON s.idservice = aps.idservice
-    GROUP BY r.idrecord, patient_name, a.date, r.total_paid, r.paymentstatus
-    ORDER BY a.date DESC;
-  `;
+  SELECT 
+    r.idrecord,
+    CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+    CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+    a.date AS appointment_date,
+    STRING_AGG(s.name, ', ') AS services,
+    a.notes,
+    a.status,
+    r.treatment_notes
+  FROM records r
+  JOIN users p ON p.idusers = r.idpatient
+  JOIN users d ON d.idusers = r.iddentist
+  JOIN appointment a ON a.idappointment = r.idappointment
+  JOIN appointment_services aps ON aps.idappointment = a.idappointment
+  JOIN service s ON s.idservice = aps.idservice
+  GROUP BY 
+    r.idrecord,
+    p.firstname, p.lastname,
+    d.firstname, d.lastname,
+    a.date, a.notes, a.status, r.treatment_notes
+  ORDER BY a.date DESC;
+`;
+
 
   try {
     const result = await pool.query(query);
