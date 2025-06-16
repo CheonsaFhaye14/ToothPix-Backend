@@ -282,25 +282,24 @@ app.get('/api/reports/records', async (req, res) => {
 
 app.get('/api/reports/top-services', async (req, res) => {
   const query = `
-    SELECT 
-      s.name AS service_name,
-      COUNT(aps.idappointment) AS usage_count,
-      COUNT(DISTINCT a.idappointment) AS unique_appointments,
-      COUNT(DISTINCT 
-        CASE 
-          WHEN a.idpatient IS NOT NULL THEN a.idpatient
-          ELSE a.patient_name
-        END
-      ) AS unique_patients,
-      SUM(s.price) AS total_revenue
-    FROM appointment_services aps
-    JOIN service s ON s.idservice = aps.idservice
-    JOIN appointment a ON a.idappointment = aps.idappointment
-    LEFT JOIN users p ON p.idusers = a.idpatient
-    JOIN records r ON r.idappointment = a.idappointment
-    WHERE a.status != 'cancelled'
-    GROUP BY s.name
-    ORDER BY usage_count DESC;
+   SELECT 
+  s.name AS service_name,
+  COALESCE(COUNT(aps.idappointment), 0) AS usage_count,
+  COALESCE(COUNT(DISTINCT a.idappointment), 0) AS unique_appointments,
+  COALESCE(COUNT(DISTINCT 
+    CASE 
+      WHEN a.idpatient IS NOT NULL THEN a.idpatient::text
+      ELSE a.patient_name
+    END
+  ), 0) AS unique_patients,
+  COALESCE(SUM(s.price), 0) AS total_revenue
+FROM service s
+LEFT JOIN appointment_services aps ON s.idservice = aps.idservice
+LEFT JOIN appointment a ON a.idappointment = aps.idappointment AND a.status != 'cancelled'
+LEFT JOIN records r ON r.idappointment = a.idappointment
+GROUP BY s.name
+ORDER BY usage_count DESC;
+
   `;
 
   try {
