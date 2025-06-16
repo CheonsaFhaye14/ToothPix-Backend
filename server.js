@@ -177,29 +177,41 @@ cron.schedule('* * * * *', async () => {
 
 app.get('/api/reports/payments', async (req, res) => {
   const query = `
-  SELECT 
-    r.idrecord,
-    CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
-    CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-    a.date AS appointment_date,
-    STRING_AGG(s.name, ', ') AS services,
-    a.notes,
-    a.status,
-    r.treatment_notes
-  FROM records r
-  JOIN users p ON p.idusers = r.idpatient
-  JOIN users d ON d.idusers = r.iddentist
-  JOIN appointment a ON a.idappointment = r.idappointment
-  JOIN appointment_services aps ON aps.idappointment = a.idappointment
-  JOIN service s ON s.idservice = aps.idservice
-  GROUP BY 
-    r.idrecord,
-    p.firstname, p.lastname,
-    d.firstname, d.lastname,
-    a.date, a.notes, a.status, r.treatment_notes
-  ORDER BY a.date DESC;
-`;
-
+    SELECT 
+      r.idrecord,
+      CASE 
+        WHEN r.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
+        ELSE a.patient_name
+      END AS patient_name,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+      a.date AS appointment_date,
+      STRING_AGG(s.name, ', ') AS services,
+      SUM(s.price) AS total_price,
+      r.total_paid,
+      r.paymentstatus
+    FROM records r
+    LEFT JOIN users p ON p.idusers = r.idpatient
+    JOIN users d ON d.idusers = r.iddentist
+    JOIN appointment a ON a.idappointment = r.idappointment
+    JOIN appointment_services aps ON aps.idappointment = a.idappointment
+    JOIN service s ON s.idservice = aps.idservice
+    GROUP BY 
+      r.idrecord, 
+      p.firstname, p.lastname, 
+      a.patient_name, 
+      d.firstname, d.lastname, 
+      a.date, 
+      r.total_paid, 
+      r.paymentstatus
+    ORDER BY 
+      LOWER(
+        CASE 
+          WHEN r.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
+          ELSE a.patient_name
+        END
+      ),
+      a.date DESC;
+  `;
 
   try {
     const result = await pool.query(query);
@@ -214,6 +226,7 @@ app.get('/api/reports/payments', async (req, res) => {
     res.status(500).json({ message: 'Error fetching payment report', error: err.message });
   }
 });
+
 
 app.get('/api/reports/records', async (req, res) => {
   const query = `
