@@ -175,6 +175,74 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+app.get('/api/reports/payments', async (req, res) => {
+  const query = `
+    SELECT 
+      r.idrecord,
+      CONCAT(u.firstname, ' ', u.lastname) AS patient_name,
+      a.date AS appointment_date,
+      STRING_AGG(s.name, ', ') AS services,
+      SUM(s.price) AS total_cost,
+      r.total_paid,
+      (SUM(s.price) - r.total_paid) AS balance,
+      r.paymentstatus
+    FROM records r
+    JOIN users u ON u.idusers = r.idpatient
+    JOIN appointment a ON a.idappointment = r.idappointment
+    JOIN appointment_services aps ON aps.idappointment = a.idappointment
+    JOIN service s ON s.idservice = aps.idservice
+    GROUP BY r.idrecord, patient_name, a.date, r.total_paid, r.paymentstatus
+    ORDER BY a.date DESC;
+  `;
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No payment records found' });
+    }
+
+    res.status(200).json({ payments: result.rows });
+  } catch (err) {
+    console.error('Error fetching payment report:', err.message);
+    res.status(500).json({ message: 'Error fetching payment report', error: err.message });
+  }
+});
+
+app.get('/api/reports/records', async (req, res) => {
+  const query = `
+    SELECT 
+      r.idrecord,
+      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+      a.date AS appointment_date,
+      STRING_AGG(s.name, ', ') AS services,
+      a.notes,
+      a.status,
+      r.treatment_notes
+    FROM records r
+    JOIN users p ON p.idusers = r.idpatient
+    JOIN users d ON d.idusers = r.iddentist
+    JOIN appointment a ON a.idappointment = r.idappointment
+    JOIN appointment_services aps ON aps.idappointment = a.idappointment
+    JOIN service s ON s.idservice = aps.idservice
+    GROUP BY r.idrecord, patient_name, dentist_name, a.date, a.notes, a.status, r.treatment_notes
+    ORDER BY a.date DESC;
+  `;
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No records found' });
+    }
+
+    res.status(200).json({ records: result.rows });
+  } catch (err) {
+    console.error('Error fetching record report:', err.message);
+    res.status(500).json({ message: 'Error fetching record report', error: err.message });
+  }
+});
 
 app.post("/api/app/register", async (req, res) => {
   const { username, email, password, usertype, firstname, lastname } = req.body;
