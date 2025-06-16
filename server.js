@@ -219,21 +219,25 @@ app.get('/api/reports/records', async (req, res) => {
   const query = `
     SELECT 
       r.idrecord,
-      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+      COALESCE(CONCAT(p.firstname, ' ', p.lastname), a.patient_name) AS patient_name,
       CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
       a.date AS appointment_date,
       STRING_AGG(s.name, ', ') AS services,
       a.notes,
       a.status,
-      r.treatment_notes
+      r.treatment_notes,
+      a.idappointment
     FROM records r
-    JOIN users p ON p.idusers = r.idpatient
+    LEFT JOIN users p ON p.idusers = r.idpatient
     JOIN users d ON d.idusers = r.iddentist
     JOIN appointment a ON a.idappointment = r.idappointment
     JOIN appointment_services aps ON aps.idappointment = a.idappointment
     JOIN service s ON s.idservice = aps.idservice
-    GROUP BY r.idrecord, patient_name, dentist_name, a.date, a.notes, a.status, r.treatment_notes
-    ORDER BY a.date DESC;
+    GROUP BY r.idrecord, p.firstname, p.lastname, a.patient_name, dentist_name, a.date, a.notes, a.status, r.treatment_notes, a.idappointment
+    ORDER BY
+      LOWER(COALESCE(CONCAT(p.firstname, ' ', p.lastname), a.patient_name)),
+      a.date,
+      a.idappointment;
   `;
 
   try {
@@ -249,6 +253,7 @@ app.get('/api/reports/records', async (req, res) => {
     res.status(500).json({ message: 'Error fetching record report', error: err.message });
   }
 });
+
 
 app.post("/api/app/register", async (req, res) => {
   const { username, email, password, usertype, firstname, lastname } = req.body;
