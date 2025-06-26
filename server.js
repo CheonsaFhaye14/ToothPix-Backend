@@ -306,6 +306,40 @@ app.get('/api/reports/today-appointments', async (req, res) => {
   }
 });
 
+app.get('/api/website/3dmodels', async (req, res) => {
+  const query = `
+    SELECT
+      rm.id,
+      rm.before_model_url,
+      rm.after_model_url,
+      rm.created_at,
+      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+      r.treatment_notes,
+      a.date AS appointment_date
+    FROM record_models rm
+    JOIN records r ON rm.idrecord = r.idrecord
+    JOIN users p ON r.idpatient = p.idusers
+    JOIN users d ON r.iddentist = d.idusers
+    JOIN appointment a ON r.idappointment = a.idappointment
+    WHERE r.idpatient IS NOT NULL
+    ORDER BY rm.created_at DESC;
+  `;
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No 3D model records found' });
+    }
+
+    res.status(200).json({ models: result.rows });
+  } catch (err) {
+    console.error('Error fetching 3D models:', err.message);
+    res.status(500).json({ message: 'Error fetching 3D models', error: err.message });
+  }
+});
+
 app.get('/api/reports/top-services', async (req, res) => {
   const query = `
    SELECT 
