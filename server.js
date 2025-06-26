@@ -830,7 +830,7 @@ app.get('/api/website/report/patients', async (req, res) => {
 
 
 
-app.get('/api/app/patientrecords/:id', async (req, res) => {
+app.get('/api/app/patientrecords/:id', async (req, res) => { 
   const patientId = req.params.id;
 
   const query = `
@@ -844,7 +844,7 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
       r.treatment_notes,
       COALESCE(
         (
-          SELECT STRING_AGG(s.name || ' ' || s.price,  ', ' )  -- Concatenate service name and price
+          SELECT STRING_AGG(s.name || ' ' || s.price,  ', ' )
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
@@ -866,11 +866,12 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), 0
-      ) - COALESCE(r.total_paid, 0)) AS stillOwe  -- Calculate the remaining balance
+      ) - COALESCE(r.total_paid, 0)) AS stillOwe
     FROM records r
     LEFT JOIN users d ON r.iddentist = d.idusers
     LEFT JOIN appointment a ON r.idappointment = a.idappointment
     WHERE r.idpatient = $1
+      AND a.status = 'completed'      -- <---- ADD THIS LINE TO FILTER COMPLETED ONLY
     ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
@@ -878,7 +879,7 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
     const result = await pool.query(query, [patientId]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No records found for this patient' });
+      return res.status(404).json({ message: 'No completed records found for this patient' });
     }
 
     res.status(200).json({ records: result.rows });
