@@ -322,7 +322,7 @@ app.get('/api/website/3dmodels', async (req, res) => {
     JOIN users p ON r.idpatient = p.idusers
     JOIN users d ON r.iddentist = d.idusers
     JOIN appointment a ON r.idappointment = a.idappointment
-    LEFT JOIN record_models rm ON rm.idrecord = r.idrecord
+    LEFT JOIN dental_models rm ON rm.idrecord = r.idrecord
     WHERE r.idpatient IS NOT NULL
     ORDER BY a.date DESC, rm.created_at DESC NULLS LAST;
   `;
@@ -2844,3 +2844,4 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
