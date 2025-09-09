@@ -65,7 +65,8 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ message: 'Token invalid or expired' });
   }
   };
- 
+ console.log("Value before JSON.parse:", process.env.SOMETHING);
+
 // Firebase admin setup
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
 console.log('GOOGLE_SERVICE_ACCOUNT:', process.env.GOOGLE_SERVICE_ACCOUNT ? 'Exists' : 'Not set');
@@ -174,6 +175,7 @@ cron.schedule('* * * * *', async () => {
     }
   }
 });
+
 
 const multer = require("multer");
 const path = require("path");
