@@ -177,13 +177,15 @@ cron.schedule('* * * * *', async () => {
 });
 
 
-import multer from "multer";
-import { exec } from "child_process";
-import { promisify } from "util";
-import path from "path";
-import fs from "fs";
+const multer = require("multer");
+const { exec } = require("child_process");
+const { promisify } = require("util");
+const path = require("path");
+const fs = require("fs");
+
 const upload = multer({ dest: "uploads/" });
 const execAsync = promisify(exec);
+
 
 // Upload BEFORE model
 app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
