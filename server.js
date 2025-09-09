@@ -175,15 +175,53 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
-// Express.js route
-app.post('/api/uploadModel', async (req, res) => {
-  const { modelName, modelData } = req.body;
-  const buffer = Buffer.from(modelData, 'base64');
+const multer = require("multer");
+const path = require("path");
 
-  // Save into database as bytea
-  await pool.query("INSERT INTO models (name, data) VALUES ($1, $2)", [modelName, buffer]);
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/models/"); // local folder
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = Date.now() + "-" + file.originalname;
+    cb(null, uniqueName);
+  }
+});
 
-  res.json({ success: true, message: "Model saved" });
+const upload = multer({ storage });
+
+// Upload BEFORE model
+app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
+  const { idrecord } = req.body;
+  const fileUrl = `/uploads/models/${req.file.filename}`; // local URL
+
+  const result = await pool.query(
+    `INSERT INTO dental_models (idrecord, before_model_url, before_uploaded_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (idrecord) DO UPDATE
+     SET before_model_url = EXCLUDED.before_model_url,
+         before_uploaded_at = NOW()
+     RETURNING *`,
+    [idrecord, fileUrl]
+  );
+
+  res.json({ success: true, data: result.rows[0] });
+});
+
+// Upload AFTER model
+app.post("/api/uploadModel/after", upload.single("model"), async (req, res) => {
+  const { idrecord } = req.body;
+  const fileUrl = `/uploads/models/${req.file.filename}`;
+
+  const result = await pool.query(
+    `UPDATE dental_models 
+     SET after_model_url = $2, after_uploaded_at = NOW()
+     WHERE idrecord = $1
+     RETURNING *`,
+    [idrecord, fileUrl]
+  );
+
+  res.json({ success: true, data: result.rows[0] });
 });
 
 
@@ -2856,5 +2894,6 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
