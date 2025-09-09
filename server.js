@@ -186,20 +186,22 @@ const fs = require("fs");
 const upload = multer({ dest: "uploads/" });
 const execAsync = promisify(exec);
 
-
 // Upload BEFORE model
 app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
   try {
-    const objPath = req.file.path; // OBJ file path
+    // Force .obj extension
+    const objName = req.file.filename + ".obj";
+    const objPath = path.join("uploads", objName);
+    fs.renameSync(req.file.path, objPath);
+
+    // Create GLB path
     const glbPath = objPath.replace(".obj", ".glb");
 
-    // Convert OBJ → GLB using obj2gltf
+    // Convert OBJ → GLB
     await execAsync(`npx obj2gltf -i ${objPath} -o ${glbPath} -b`);
 
-    // Save final .glb URL (adjust for your hosting)
     const fileUrl = `/uploads/${path.basename(glbPath)}`;
 
-    // Save to DB (PostgreSQL)
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_uploaded_at)
        VALUES ($1, $2, NOW())
@@ -216,6 +218,7 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 
 
