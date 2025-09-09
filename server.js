@@ -177,54 +177,44 @@ cron.schedule('* * * * *', async () => {
 });
 
 
-const multer = require("multer");
-const path = require("path");
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/models/"); // local folder
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = Date.now() + "-" + file.originalname;
-    cb(null, uniqueName);
-  }
-});
-
-const upload = multer({ storage });
+import multer from "multer";
+import { exec } from "child_process";
+import { promisify } from "util";
+import path from "path";
+import fs from "fs";
+const upload = multer({ dest: "uploads/" });
+const execAsync = promisify(exec);
 
 // Upload BEFORE model
 app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
-  const { idrecord } = req.body;
-  const fileUrl = `/uploads/models/${req.file.filename}`; // local URL
+  try {
+    const objPath = req.file.path; // OBJ file path
+    const glbPath = objPath.replace(".obj", ".glb");
 
-  const result = await pool.query(
-    `INSERT INTO dental_models (idrecord, before_model_url, before_uploaded_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (idrecord) DO UPDATE
-     SET before_model_url = EXCLUDED.before_model_url,
-         before_uploaded_at = NOW()
-     RETURNING *`,
-    [idrecord, fileUrl]
-  );
+    // Convert OBJ → GLB using obj2gltf
+    await execAsync(`npx obj2gltf -i ${objPath} -o ${glbPath} -b`);
 
-  res.json({ success: true, data: result.rows[0] });
+    // Save final .glb URL (adjust for your hosting)
+    const fileUrl = `/uploads/${path.basename(glbPath)}`;
+
+    // Save to DB (PostgreSQL)
+    await pool.query(
+      `INSERT INTO dental_models (idrecord, before_model_url, before_uploaded_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (idrecord) DO UPDATE
+       SET before_model_url = EXCLUDED.before_model_url,
+           before_uploaded_at = NOW()
+       RETURNING *`,
+      [req.body.idrecord, fileUrl]
+    );
+
+    res.json({ success: true, url: fileUrl });
+  } catch (err) {
+    console.error("Upload failed:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-// Upload AFTER model
-app.post("/api/uploadModel/after", upload.single("model"), async (req, res) => {
-  const { idrecord } = req.body;
-  const fileUrl = `/uploads/models/${req.file.filename}`;
-
-  const result = await pool.query(
-    `UPDATE dental_models 
-     SET after_model_url = $2, after_uploaded_at = NOW()
-     WHERE idrecord = $1
-     RETURNING *`,
-    [idrecord, fileUrl]
-  );
-
-  res.json({ success: true, data: result.rows[0] });
-});
 
 
 app.get('/api/reports/payments', async (req, res) => {
