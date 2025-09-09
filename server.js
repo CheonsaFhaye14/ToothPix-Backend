@@ -175,6 +175,18 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
+// Express.js route
+app.post('/api/uploadModel', async (req, res) => {
+  const { modelName, modelData } = req.body;
+  const buffer = Buffer.from(modelData, 'base64');
+
+  // Save into database as bytea
+  await pool.query("INSERT INTO models (name, data) VALUES ($1, $2)", [modelName, buffer]);
+
+  res.json({ success: true, message: "Model saved" });
+});
+
+
 app.get('/api/reports/payments', async (req, res) => {
   const query = `
     SELECT 
@@ -2844,4 +2856,5 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
