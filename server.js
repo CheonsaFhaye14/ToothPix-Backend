@@ -225,12 +225,10 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
   }
 });
 
-
 app.get('/test-model/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Fetch the JSON from DB
     const result = await pool.query(
       'SELECT before_model_json FROM dental_models WHERE id = $1',
       [id]
@@ -242,27 +240,24 @@ app.get('/test-model/:id', async (req, res) => {
 
     const gltfJsonObj = result.rows[0].before_model_json;
 
-    // Optional: validate object
     if (typeof gltfJsonObj !== 'object') {
       console.warn(`⚠️ DB GLTF JSON for model ${id} is not an object`);
     } else {
       console.log(`✅ DB GLTF JSON for model ${id} is valid`);
     }
 
-    // Write JSON to a temporary .gltf file
-    const tempFilePath = path.join(__dirname, `temp_model_${id}.gltf`);
-    fs.writeFileSync(tempFilePath, JSON.stringify(gltfJsonObj));
+    const gltfContent = JSON.stringify(gltfJsonObj, null, 2);
 
-    // Serve the .gltf file
-    res.sendFile(tempFilePath, { headers: { 'Content-Type': 'model/gltf+json' } });
+    // Send as downloadable .gltf
+    res.setHeader('Content-Type', 'model/gltf+json');
+    res.setHeader('Content-Disposition', `attachment; filename="DentalModel_${id}.gltf"`);
+    res.send(gltfContent);
 
   } catch (err) {
     console.error(err);
     res.status(500).send('Error retrieving GLTF');
   }
 });
-
-
 
 
 
@@ -2946,6 +2941,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
