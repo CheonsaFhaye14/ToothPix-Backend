@@ -237,24 +237,25 @@ app.get('/test-model/:id', async (req, res) => {
     if (!result.rows[0] || !result.rows[0].before_model_json)
       return res.status(404).send('Model not found');
 
-    const gltfJson = result.rows[0].before_model_json;
+    const gltfJsonObj = result.rows[0].before_model_json;
 
-    // Validate JSON
-    try {
-      JSON.parse(gltfJson);
+    // Optional: validate object
+    if (typeof gltfJsonObj !== 'object') {
+      console.warn(`⚠️ DB GLTF JSON for model ${id} is not an object`);
+    } else {
       console.log(`✅ DB GLTF JSON for model ${id} is valid`);
-    } catch (err) {
-      console.warn(`⚠️ DB GLTF JSON for model ${id} may be invalid:`, err.message);
     }
 
+    // Send as JSON string
     res.setHeader('Content-Type', 'model/gltf+json');
-    res.send(gltfJson);
+    res.send(JSON.stringify(gltfJsonObj));
 
   } catch (err) {
     console.error(err);
     res.status(500).send('Error retrieving GLTF');
   }
 });
+
 
 
 
@@ -2930,6 +2931,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
