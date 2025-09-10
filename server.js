@@ -175,6 +175,12 @@ cron.schedule('* * * * *', async () => {
     }
   }
 });
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+// Configure Multer to use a temporary folder
+const upload = multer({ dest: "uploads/" });
 
 // Upload BEFORE model (accept GLTF directly)
 app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
@@ -2916,6 +2922,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
