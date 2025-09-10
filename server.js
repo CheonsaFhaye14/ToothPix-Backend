@@ -175,7 +175,7 @@ cron.schedule('* * * * *', async () => {
     }
   }
 });
-const multer = require("multer");
+const multer = require("multer"); 
 const path = require("path");
 const fs = require("fs");
 
@@ -183,47 +183,47 @@ const fs = require("fs");
 const upload = multer({ dest: "uploads/" });
 
 // Upload BEFORE model (accept GLTF directly)
-app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
+app.post("/api/uploadModel/before", upload.fields([
+  { name: "gltf", maxCount: 1 },
+  { name: "bin", maxCount: 1 }
+]), async (req, res) => {
   try {
-    const originalName = req.file.originalname;
-    const gltfName = req.file.filename + path.extname(originalName);
-    const gltfPath = path.join("uploads", gltfName);
+    // GLTF file
+    const gltfFile = req.files['gltf'][0];
+    const gltfExt = path.extname(gltfFile.originalname);
+    const gltfPath = path.join("uploads", gltfFile.filename + gltfExt);
+    fs.renameSync(gltfFile.path, gltfPath);
+    const gltfUrl = `/uploads/${path.basename(gltfPath)}`;
 
-    // Move file to proper location
-    fs.renameSync(req.file.path, gltfPath);
-    const fileUrl = `/uploads/${path.basename(gltfPath)}`;
-
-    // Read file content
-    const gltfContentStr = fs.readFileSync(gltfPath, "utf8");
-
-    // Parse string into object for JSONB
-    let gltfContentObj;
-    try {
-      gltfContentObj = JSON.parse(gltfContentStr);
-      console.log("✅ GLTF JSON looks valid");
-    } catch (err) {
-      console.warn("⚠️ GLTF JSON may be invalid:", err.message);
-      return res.status(400).json({ success: false, error: "Invalid GLTF JSON" });
+    // BIN file (optional)
+    let binUrl = null;
+    if (req.files['bin']) {
+      const binFile = req.files['bin'][0];
+      const binExt = path.extname(binFile.originalname);
+      const binPath = path.join("uploads", binFile.filename + binExt);
+      fs.renameSync(binFile.path, binPath);
+      binUrl = `/uploads/${path.basename(binPath)}`;
     }
 
-    // Insert/update DB (JSONB column)
+    // Insert/update DB (only URLs)
     await pool.query(
-      `INSERT INTO dental_models (idrecord, before_model_url, before_model_json, before_uploaded_at)
+      `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
        VALUES ($1, $2, $3, NOW())
        ON CONFLICT (idrecord) DO UPDATE
        SET before_model_url = EXCLUDED.before_model_url,
-           before_model_json = EXCLUDED.before_model_json,
+           before_model_bin_url = EXCLUDED.before_model_bin_url,
            before_uploaded_at = NOW()
        RETURNING *`,
-      [req.body.idrecord, fileUrl, gltfContentObj] // <-- Pass object, not string
+      [req.body.idrecord, gltfUrl, binUrl]
     );
 
-    res.json({ success: true, url: fileUrl });
+    res.json({ success: true, gltfUrl, binUrl });
   } catch (err) {
     console.error("Upload failed:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 app.get('/test-model/:id', async (req, res) => {
   try {
@@ -2942,6 +2942,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
