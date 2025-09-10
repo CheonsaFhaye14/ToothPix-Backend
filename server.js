@@ -175,33 +175,26 @@ cron.schedule('* * * * *', async () => {
     }
   }
 });
-
-
 const multer = require("multer");
-const { exec } = require("child_process");
-const { promisify } = require("util");
 const path = require("path");
 const fs = require("fs");
 
 const upload = multer({ dest: "uploads/" });
-const execAsync = promisify(exec);
 
-// Upload BEFORE model
+// Upload BEFORE model (accept GLTF directly)
 app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
   try {
-    // Force .obj extension
-    const objName = req.file.filename + ".obj";
-    const objPath = path.join("uploads", objName);
-    fs.renameSync(req.file.path, objPath);
+    // Get original filename
+    const originalName = req.file.originalname;
+    const gltfName = req.file.filename + path.extname(originalName); // preserve extension
+    const gltfPath = path.join("uploads", gltfName);
 
-    // Create GLB path
-    const glbPath = objPath.replace(".obj", ".glb");
+    // Move uploaded file to proper path
+    fs.renameSync(req.file.path, gltfPath);
 
-    // Convert OBJ → GLB
-    await execAsync(`npx obj2gltf -i ${objPath} -o ${glbPath} -b`);
+    const fileUrl = `/uploads/${path.basename(gltfPath)}`;
 
-    const fileUrl = `/uploads/${path.basename(glbPath)}`;
-
+    // Insert or update in DB
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_uploaded_at)
        VALUES ($1, $2, NOW())
@@ -218,7 +211,6 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
     res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 
 
@@ -2891,6 +2883,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
