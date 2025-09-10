@@ -30,6 +30,8 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(bodyParser.json());
+// Make uploads folder publicly accessible
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // PostgreSQL connection setup
 const pool = new Pool({
@@ -2942,6 +2944,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
