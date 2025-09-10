@@ -237,11 +237,11 @@ app.post('/api/uploadModel/before', upload.fields([
       [idrecord, gltfUrl, binUrl]
     );
 
-    res.json({ success: true, gltfUrl, binUrl });
+    return res.json({ success: true, gltfUrl, binUrl });
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -292,10 +292,10 @@ app.get('/api/reports/payments', async (req, res) => {
       return res.status(404).json({ message: 'No payment records found' });
     }
 
-    res.status(200).json({ payments: result.rows });
+    return res.status(200).json({ payments: result.rows });
   } catch (err) {
     console.error('Error fetching payment report:', err.message);
-    res.status(500).json({ message: 'Error fetching payment report', error: err.message });
+    return res.status(500).json({ message: 'Error fetching payment report', error: err.message });
   }
 });
 
@@ -345,10 +345,10 @@ app.get('/api/reports/records', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
-    res.status(200).json({ records: result.rows });
+    return res.status(200).json({ records: result.rows });
   } catch (err) {
     console.error('Error fetching record report:', err.message);
-    res.status(500).json({ message: 'Error fetching record report', error: err.message });
+    return res.status(500).json({ message: 'Error fetching record report', error: err.message });
   }
 });
 app.get('/api/reports/today-appointments', async (req, res) => {
@@ -371,10 +371,10 @@ app.get('/api/reports/today-appointments', async (req, res) => {
 
   try {
     const result = await pool.query(query);
-    res.status(200).json({ appointmentsToday: result.rows });
+    return res.status(200).json({ appointmentsToday: result.rows });
   } catch (err) {
     console.error('Error fetching today appointments report:', err.message);
-    res.status(500).json({ message: 'Error fetching today appointments', error: err.message });
+    return res.status(500).json({ message: 'Error fetching today appointments', error: err.message });
   }
 });
 
@@ -406,10 +406,10 @@ app.get('/api/website/3dmodels', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
-    res.status(200).json({ models: result.rows });
+    return res.status(200).json({ models: result.rows });
   } catch (err) {
     console.error('Error fetching 3D models:', err.message);
-    res.status(500).json({ message: 'Error fetching 3D models', error: err.message });
+    return res.status(500).json({ message: 'Error fetching 3D models', error: err.message });
   }
 });
 
@@ -442,10 +442,10 @@ ORDER BY usage_count DESC;
       return res.status(404).json({ message: 'No service usage data found' });
     }
 
-    res.status(200).json({ topServices: result.rows });
+    return res.status(200).json({ topServices: result.rows });
   } catch (err) {
     console.error('Error fetching top services report:', err.message);
-    res.status(500).json({ message: 'Error fetching top services report', error: err.message });
+    return res.status(500).json({ message: 'Error fetching top services report', error: err.message });
   }
 });
 
@@ -487,13 +487,13 @@ app.post("/api/app/register", async (req, res) => {
       [username, email, hashedPassword, usertype, firstname, lastname]
     );
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "User registered successfully.",
       user: newUser.rows[0],
     });
   } catch (err) {
     console.error("Error in /register:", err.message);
-    res.status(500).json({ message: "Internal server error", error: err.message });
+    return res.status(500).json({ message: "Internal server error", error: err.message });
   }
 });
 
@@ -541,10 +541,10 @@ app.get('/api/fullreport', async (req, res) => {
 
   try {
     const result = await pool.query(query, params);
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.error('Error fetching report data:', err);
-    res.status(500).json({ error: 'Failed to fetch report data' });
+    return res.status(500).json({ error: 'Failed to fetch report data' });
   }
 });
 
@@ -581,7 +581,7 @@ app.post('/api/website/login', [
       { expiresIn: '24h' }
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Admin login successful',
       token: token,
       user: {
@@ -591,7 +591,7 @@ app.post('/api/website/login', [
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Error querying database' });
+    return res.status(500).json({ message: 'Error querying database' });
   }
 });
 
@@ -605,12 +605,12 @@ app.get('/api/admin', async (req, res) => {
       return res.status(404).json({ message: 'No admin found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       admin: result.rows
     });
   } catch (err) {
     console.error('Error fetching admin:', err.message);
-    res.status(500).json({ message: 'Error fetching admin', error: err.message });
+    return res.status(500).json({ message: 'Error fetching admin', error: err.message });
   }
 });
 
@@ -640,12 +640,12 @@ app.get('/api/website/appointments/report', async (req, res) => {
       return res.status(404).json({ message: 'No appointments found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       records: result.rows
     });
   } catch (err) {
     console.error('Error fetching appointments:', err.message);
-    res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+    return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   }
 });
 
@@ -721,14 +721,14 @@ app.post('/api/app/appointments', async (req, res) => {
       console.error('❌ Failed to send notification to dentist:', notifErr.message);
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'Appointment created successfully',
       appointment,
     });
 
   } catch (err) {
     console.error('❌ Error creating appointment:', err.message);
-    res.status(500).json({ message: 'Error creating appointment', error: err.message });
+    return res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
 
@@ -799,7 +799,7 @@ app.get('/api/website/admindashboard', async (req, res) => {
 
     const row = result.rows[0];
 
-    res.status(200).json({
+    return res.status(200).json({
       totalAppointmentsToday: row.totalappointmentstoday,
       thisMonthEarnings: parseFloat(row.thismonthearnings) || 0,
       topServices: row.topservices || [],
@@ -808,7 +808,7 @@ app.get('/api/website/admindashboard', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching admin dashboard data:', err.message);
-    res.status(500).json({ message: 'Error fetching admin dashboard', error: err.message });
+    return res.status(500).json({ message: 'Error fetching admin dashboard', error: err.message });
   }
 });
 
@@ -882,14 +882,14 @@ app.post('/api/website/appointments', async (req, res) => {
     if (idpatient) await notify(idpatient, 'patient');
     await notify(iddentist, 'dentist');
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'Appointment created and notifications sent successfully',
       appointment,
     });
 
   } catch (err) {
     console.error('❌ Error creating appointment:', err.message);
-    res.status(500).json({ message: 'Error creating appointment', error: err.message });
+    return res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
 
@@ -928,10 +928,10 @@ app.get('/api/website/report/patients', async (req, res) => {
     `;
 
     const result = await pool.query(query);
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (err) {
     console.error('Error fetching all patient data:', err);
-    res.status(500).json({ message: 'Server error' });
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -989,10 +989,10 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
       return res.status(404).json({ message: 'No completed records found for this patient' });
     }
 
-    res.status(200).json({ records: result.rows });
+    return res.status(200).json({ records: result.rows });
   } catch (err) {
     console.error('Error fetching patient records:', err.message);
-    res.status(500).json({ message: 'Error fetching patient records', error: err.message });
+    return res.status(500).json({ message: 'Error fetching patient records', error: err.message });
   }
 });
 
@@ -1110,10 +1110,10 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
       return res.status(404).json({ message: 'No records found for this dentist' });
     }
 
-    res.status(200).json({ records: result.rows });
+    return res.status(200).json({ records: result.rows });
   } catch (err) {
     console.error('Error fetching dentist records:', err.message);
-    res.status(500).json({ message: 'Error fetching dentist records', error: err.message });
+    return res.status(500).json({ message: 'Error fetching dentist records', error: err.message });
   }
 });
 
@@ -1176,12 +1176,12 @@ app.post('/api/website/record', async (req, res) => {
     );
 
     await pool.query('COMMIT');
-    res.status(201).json({ message: 'Appointment and record created successfully.', idappointment });
+    return res.status(201).json({ message: 'Appointment and record created successfully.', idappointment });
 
   } catch (error) {
     await pool.query('ROLLBACK');
     console.error('Error creating appointment and record:', error.message);
-    res.status(500).json({ message: 'Failed to create appointment and record.', error: error.message });
+    return res.status(500).json({ message: 'Failed to create appointment and record.', error: error.message });
   }
 });
 app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
@@ -1281,15 +1281,15 @@ app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
     } else {
       console.warn(`⚠️ No FCM token found for dentist ${updatedAppt.iddentist}`);
     }
-
-    res.json({
-      message: 'Appointment updated successfully',
-      appointment: updatedAppt,
-    });
+ 
+     return res.json({
+       message: 'Appointment updated successfully',
+       appointment: updatedAppt,
+     });
 
   } catch (err) {
     console.error('❌ Error updating appointment:', err.message);
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Error updating appointment',
       error: err.message,
     });
@@ -1400,14 +1400,14 @@ const fcmToken = userResult.rows[0]?.fcm_token;
       console.warn(`⚠️ No FCM token found for patient ${updatedAppt.idpatient}`);
     }
 
-    res.json({
+    return res.json({
       message: 'Appointment updated successfully',
       appointment: updatedAppt,
     });
 
   } catch (err) {
     console.error('❌ Error updating appointment:', err.message);
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Error updating appointment',
       error: err.message,
     });
@@ -1500,11 +1500,11 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
     }
 
     await pool.query('COMMIT');
-    res.status(200).json({ message: 'Appointment updated successfully.' });
+    return res.status(200).json({ message: 'Appointment updated successfully.' });
   } catch (err) {
     await pool.query('ROLLBACK');
     console.error('Error updating appointment:', err.message);
-    res.status(500).json({ message: 'Failed to update appointment', error: err.message });
+    return res.status(500).json({ message: 'Failed to update appointment', error: err.message });
   }
 });
 
@@ -1524,10 +1524,10 @@ app.delete('/api/website/record/:id', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found' });
     }
 
-    res.status(200).json({ message: 'Appointment deleted successfully' });
+    return res.status(200).json({ message: 'Appointment deleted successfully' });
   } catch (error) {
     console.error('Error deleting appointment:', error.message);
-    res.status(500).json({ message: 'Error deleting appointment', error: error.message });
+    return res.status(500).json({ message: 'Error deleting appointment', error: error.message });
   }
 });
 
@@ -1549,10 +1549,10 @@ app.delete('/api/app/appointments/:id', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found' });
     }
 
-    res.status(200).json({ message: 'Appointment deleted successfully' });
+    return res.status(200).json({ message: 'Appointment deleted successfully' });
   } catch (err) {
     console.error('Error deleting, appointment in use:', err);
-    res.status(500).json({ message: 'Error deleting, appointment in use', error: err.message });
+    return res.status(500).json({ message: 'Error deleting, appointment in use', error: err.message });
   }
 });
 
@@ -1596,12 +1596,12 @@ ORDER BY ai.date ASC;
       return res.status(404).json({ message: 'No past appointments found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       records: result.rows
     });
   } catch (err) {
     console.error('Error fetching records:', err.message);
-    res.status(500).json({ message: 'Error fetching records', error: err.message });
+    return res.status(500).json({ message: 'Error fetching records', error: err.message });
   }
 });
 
@@ -1660,14 +1660,14 @@ app.get('/api/website/payment', async (req, res) => {
       return res.status(404).json({ message: 'No payment records found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       payments: result.rows
     });
 
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Error in payment API:', err.message);
-    res.status(500).json({ message: 'Error fetching payments', error: err.message });
+    return res.status(500).json({ message: 'Error fetching payments', error: err.message });
   } finally {
     client.release();
   }
@@ -1712,13 +1712,13 @@ app.put('/api/website/payment/:id', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found or not eligible for update' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Payment updated successfully',
       updatedRecord: result.rows[0],
     });
   } catch (err) {
     console.error('Error updating payment:', err.message);
-    res.status(500).json({ message: 'Failed to update payment', error: err.message });
+    return res.status(500).json({ message: 'Failed to update payment', error: err.message });
   } finally {
     client.release();
   }
@@ -1737,10 +1737,10 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
     );
 
     const services = result.rows; // contains idservice, name, and price
-    res.json({ services });
+    return res.json({ services });
   } catch (error) {
     console.error('Error fetching services for appointment:', error.message);
-    res.status(500).json({ error: 'Error fetching services for appointment' });
+    return res.status(500).json({ error: 'Error fetching services for appointment' });
   }
 });
 
@@ -1845,14 +1845,14 @@ const updateQuery = `
 
     const result = await pool.query(updateQuery, values);
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'User updated successfully',
       user: result.rows[0],
     });
 
   } catch (error) {
     console.error('Error updating user:', error.message);
-    res.status(500).json({ message: 'Error updating user', error: error.message });
+    return res.status(500).json({ message: 'Error updating user', error: error.message });
   }
 });
 
@@ -1899,10 +1899,10 @@ app.get('/api/app/records', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
-    res.status(200).json({ records: result.rows });
+    return res.status(200).json({ records: result.rows });
   } catch (err) {
     console.error('Error fetching records:', err.message);
-    res.status(500).json({ message: 'Error fetching records', error: err.message });
+    return res.status(500).json({ message: 'Error fetching records', error: err.message });
   }
 });
 
@@ -1968,7 +1968,7 @@ app.post('/api/app/users', async (req, res) => {
 
     const result = await pool.query(insertQuery, values);
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'User created successfully',
       user: result.rows[0],
     });
@@ -1977,7 +1977,7 @@ app.post('/api/app/users', async (req, res) => {
       return res.status(409).json({ message: 'Username or email already exists' });
     }
     console.error('Error adding user:', error.message);
-    res.status(500).json({ message: 'Error adding user', error: error.message });
+    return res.status(500).json({ message: 'Error adding user', error: error.message });
   }
 });
 
@@ -2008,9 +2008,9 @@ app.get('/api/app/appointments/search', async (req, res) => {
 
   try {
     const result = await pool.query(query, values);
-    res.status(200).json({ appointments: result.rows });
+    return res.status(200).json({ appointments: result.rows });
   } catch (err) {
-    res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+    return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   }
 });
 
@@ -2026,12 +2026,12 @@ app.get('/api/app/dentists', async (req, res) => {
       return res.status(404).json({ message: 'No dentists found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       dentists: result.rows
     });
   } catch (err) {
     console.error('Error fetching dentists:', err.message);
-    res.status(500).json({ message: 'Error fetching dentists', error: err.message });
+    return res.status(500).json({ message: 'Error fetching dentists', error: err.message });
   }
 });
 
@@ -2087,14 +2087,14 @@ app.post('/api/request-reset-password', async (req, res) => {
         text: `Click the following link to reset your password: ${resetLink}`,
       });
 
-      res.status(200).json({ message: `Password reset link sent to ${email}.` });
+      return res.status(200).json({ message: `Password reset link sent to ${email}.` });
     } catch (emailError) {
       console.error('Email sending error:', emailError);
       return res.status(500).json({ message: 'Failed to send email', error: emailError.message });
     }
   } catch (err) {
     console.error('Database error:', err);
-    res.status(500).json({ message: 'Database error occurred', error: err.message });
+    return res.status(500).json({ message: 'Database error occurred', error: err.message });
   }
 });
 
@@ -2126,13 +2126,13 @@ app.post('/api/reset-password', async (req, res) => {
     await pool.query(updateQuery, [hashedPassword, token]);
 
     // Return success message + usertype
-    res.status(200).json({ 
+    return res.status(200).json({ 
       message: 'Password has been successfully reset. You can now log in with your new password.', 
       usertype: user.usertype 
     });
   } catch (err) {
     console.error('Error resetting password:', err);
-    res.status(500).json({ message: 'Server error during password reset', error: err.message });
+    return res.status(500).json({ message: 'Server error during password reset', error: err.message });
   }
 });
 
@@ -2166,13 +2166,13 @@ app.post('/api/app/records', async (req, res) => {
     const result = await pool.query(query, [idpatient, iddentist, idappointment, treatment_notes, paymentstatus]);
     const record = result.rows[0];
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'Record created successfully',
       record,
     });
   } catch (err) {
     console.error('Error creating record:', err.message);
-    res.status(500).json({ message: 'Error creating record', error: err.message });
+    return res.status(500).json({ message: 'Error creating record', error: err.message });
   }
 });
 
@@ -2216,12 +2216,12 @@ app.get('/api/app/users', async (req, res) => {
         : null
     }));
 
-    res.status(200).json({
+    return res.status(200).json({
       records: formattedRows
     });
   } catch (err) {
     console.error('Error fetching users:', err.message);
-    res.status(500).json({ message: 'Error fetching users', error: err.message });
+    return res.status(500).json({ message: 'Error fetching users', error: err.message });
   }
 });
 
@@ -2285,13 +2285,13 @@ app.put('/api/app/records/:idrecord', async (req, res) => {
       return res.status(404).json({ message: 'Record not found.' });
     }
 
-    res.json({
+    return res.json({
       message: 'Record updated successfully',
       record: result.rows[0],
     });
   } catch (err) {
     console.error('Error updating record:', err.message);
-    res.status(500).json({ message: 'Error updating record', error: err.message });
+    return res.status(500).json({ message: 'Error updating record', error: err.message });
   }
 });
 
@@ -2308,10 +2308,10 @@ app.delete('/api/app/records/:id', async (req, res) => {
       return res.status(404).json({ message: 'Record not found' });
     }
 
-    res.status(200).json({ message: 'Record deleted successfully' });
+    return res.status(200).json({ message: 'Record deleted successfully' });
   } catch (err) {
     console.error('Error deleting, record in use:', err.message);
-    res.status(500).json({ message: 'Error deleting, record in use', error: err.message });
+    return res.status(500).json({ message: 'Error deleting, record in use', error: err.message });
   }
 });
 
@@ -2464,14 +2464,14 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     await Promise.all(insertServicePromises);
 
     // 4. Respond with success
-    res.json({
+    return res.json({
       message: 'Appointment updated successfully',
       appointment: updatedAppointment,
     });
 
   } catch (error) {
     console.error('Error updating appointment:', error.message);
-    res.status(500).json({ message: 'Error updating appointment', error: error.message });
+    return res.status(500).json({ message: 'Error updating appointment', error: error.message });
   }
 });
 
@@ -2490,12 +2490,12 @@ app.get('/api/app/patients', async (req, res) => {
       return res.status(404).json({ message: 'No patients found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       patients: result.rows
     });
   } catch (err) {
     console.error('Error fetching patients:', err.message);
-    res.status(500).json({ message: 'Error fetching patients', error: err.message });
+    return res.status(500).json({ message: 'Error fetching patients', error: err.message });
   }
 });
 
@@ -2549,13 +2549,13 @@ app.get('/api/app/appointments', async (req, res) => {
     }
 
     // Send the sorted appointments back in the response
-    res.status(200).json({
+    return res.status(200).json({
       appointments: result.rows
     });
   } catch (err) {
     await client.query('ROLLBACK'); // Rollback in case of error
     console.error('Error fetching appointments:', err.message);
-    res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+    return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   } finally {
     client.release(); // Release the client back to the pool
   }
@@ -2610,7 +2610,7 @@ if (fcmToken) {
     const refreshToken = crypto.randomBytes(64).toString('hex');
     refreshTokensStore.push({ token: refreshToken, userId: user.idusers });
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Login successful',
       accessToken,
       refreshToken,
@@ -2622,7 +2622,7 @@ if (fcmToken) {
       },
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error querying database' });
+    return res.status(500).json({ message: 'Error querying database' });
   }
 });
 
@@ -2643,7 +2643,7 @@ app.post('/api/app/refresh-token', (req, res) => {
     { expiresIn: '24h' }
   );
 
-  res.status(200).json({ accessToken: newAccessToken });
+  return res.status(200).json({ accessToken: newAccessToken });
 });
 
 app.post('/api/app/logout', async (req, res) => {
@@ -2671,7 +2671,7 @@ app.post('/api/app/logout', async (req, res) => {
   // Remove refresh token from store
   refreshTokensStore = refreshTokensStore.filter(rt => rt.token !== refreshToken);
 
-  res.status(200).json({ message: 'Logged out successfully' });
+ return res.status(200).json({ message: 'Logged out successfully' });
 });
 
 
@@ -2699,13 +2699,13 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
     delete formattedUser.password;
     delete formattedUser.reset_token;
 
-    res.status(200).json({
+    return res.status(200).json({
       profile: formattedUser
     });
 
   } catch (err) {
     console.error("Error retrieving profile:", err.message);
-    res.status(500).json({ message: 'Error retrieving profile' });
+    return res.status(500).json({ message: 'Error retrieving profile' });
   }
 });
 
@@ -2722,13 +2722,13 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 
     const updatedUser = await pool.query(updateQuery, [firstname, lastname, birthdate, contact, address, gender, allergies, medicalhistory, email, username, req.userId]);
 
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Profile updated successfully',
       profile: updatedUser.rows[0]
     });
   } catch (err) {
     console.error("Error updating profile:", err.message);
-    res.status(500).json({ message: 'Error updating profile' });
+    return res.status(500).json({ message: 'Error updating profile' });
   }
 });
 
@@ -2819,7 +2819,7 @@ app.post('/api/app/services', async (req, res) => {
       });
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'Service added and notifications sent successfully',
       service,
       notificationSent: true,
@@ -2829,7 +2829,7 @@ app.post('/api/app/services', async (req, res) => {
 
   } catch (err) {
     console.error('❌ Error adding service or sending notifications:', err.stack);
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Failed to add service or notify users',
       error: err.message
     });
@@ -2849,12 +2849,12 @@ app.get('/api/app/services', async (req, res) => {
       return res.status(404).json({ message: 'No services found' });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       services: result.rows
     });
   } catch (err) {
     console.error('Error fetching services:', err.message);
-    res.status(500).json({ message: 'Error fetching services', error: err.message });
+    return res.status(500).json({ message: 'Error fetching services', error: err.message });
   }
 });
 
@@ -2890,13 +2890,13 @@ app.put('/api/app/services/:id', async (req, res) => {
     const updatedService = result.rows[0];
 
     // Respond with the updated service data
-    res.status(200).json({
+    return res.status(200).json({
       message: 'Service updated successfully',
       service: updatedService,
     });
   } catch (err) {
     console.error('Error updating service:', err.message);
-    res.status(500).json({ message: 'Error updating service', error: err.message });
+    return res.status(500).json({ message: 'Error updating service', error: err.message });
   }
 });
 
@@ -2912,10 +2912,10 @@ app.delete('/api/app/services/:id', async (req, res) => {
       return res.status(404).json({ message: 'Service not found' });
     }
 
-    res.status(200).json({ message: 'Service deleted successfully' });
+    return res.status(200).json({ message: 'Service deleted successfully' });
   } catch (err) {
     console.error('Error deleting, service in use:', err.message);
-    res.status(500).json({ message: 'Error deleting, service in use', error: err.message });
+    return res.status(500).json({ message: 'Error deleting, service in use', error: err.message });
   }
 });
 // Delete User
@@ -2930,10 +2930,10 @@ app.delete('/api/app/users/:id', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.status(200).json({ message: 'User deleted successfully' });
+    return res.status(200).json({ message: 'User deleted successfully' });
   } catch (err) {
     console.error('Error deleting, user in use:', err.message);
-    res.status(500).json({ message: 'Error deleting, user in use', error: err.message });
+    return res.status(500).json({ message: 'Error deleting, user in use', error: err.message });
   }
 });
 
@@ -2941,6 +2941,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
