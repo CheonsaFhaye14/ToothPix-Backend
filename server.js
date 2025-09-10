@@ -30,8 +30,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(bodyParser.json());
-// Make uploads folder publicly accessible
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 
 // PostgreSQL connection setup
 const pool = new Pool({
@@ -179,6 +178,8 @@ cron.schedule('* * * * *', async () => {
 });
 const multer = require("multer"); 
 const path = require("path");
+// Make uploads folder publicly accessible
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const fs = require("fs");
 
 // Configure Multer to use a temporary folder
@@ -2944,6 +2945,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
