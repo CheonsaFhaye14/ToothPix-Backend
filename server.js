@@ -17,7 +17,6 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,           // e.g., https://example1.com
   process.env.SECOND_FRONTEND_URL     // e.g., https://example2.com
 ];
-
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -176,95 +175,67 @@ cron.schedule('* * * * *', async () => {
     }
   }
 });
-const multer = require("multer"); 
-const path = require("path");
-// Make uploads folder publicly accessible
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-const fs = require("fs");
 
-// Configure Multer to use a temporary folder
-const upload = multer({ dest: "uploads/" });
+const { Storage } = require('@google-cloud/storage');
+const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
+// Multer temporary folder
+const upload = multer({ dest: 'temp/' });
 
-// Upload BEFORE model (accept GLTF directly)
-app.post("/api/uploadModel/before", upload.fields([
-  { name: "gltf", maxCount: 1 },
-  { name: "bin", maxCount: 1 }
+// Google Cloud Storage setup
+const storage = new Storage({ keyFilename: path.join(__dirname, 'service-account.json') });
+const bucket = storage.bucket('toothpix-models');
+
+// Upload BEFORE model (accept GLTF and optional BIN)
+app.post('/api/uploadModel/before', upload.fields([
+  { name: 'gltf', maxCount: 1 },
+  { name: 'bin', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    // GLTF file
-    const gltfFile = req.files['gltf'][0];
-    const gltfExt = path.extname(gltfFile.originalname);
-    const gltfPath = path.join("uploads", gltfFile.filename + gltfExt);
-    fs.renameSync(gltfFile.path, gltfPath);
-    const gltfUrl = `/uploads/${path.basename(gltfPath)}`;
+    const idrecord = req.body.idrecord;
 
-    // BIN file (optional)
-    let binUrl = null;
+    // Upload GLTF
+    const gltfFile = req.files['gltf'][0];
+    const gltfPath = `models/${gltfFile.originalname}`;
+    await bucket.upload(gltfFile.path, {
+      destination: gltfPath,
+      contentType: 'model/gltf+json'
+    });
+
+    // Upload BIN if exists
+    let binPath = null;
     if (req.files['bin']) {
       const binFile = req.files['bin'][0];
-      const binExt = path.extname(binFile.originalname);
-      const binPath = path.join("uploads", binFile.filename + binExt);
-      fs.renameSync(binFile.path, binPath);
-      binUrl = `/uploads/${path.basename(binPath)}`;
+      binPath = `models/${binFile.originalname}`;
+      await bucket.upload(binFile.path, {
+        destination: binPath,
+        contentType: 'application/octet-stream'
+      });
     }
 
-    // Insert/update DB (only URLs)
+    // Delete temp files
+    fs.unlinkSync(gltfFile.path);
+    if (req.files['bin']) fs.unlinkSync(req.files['bin'][0].path);
+
+    // Save GCS paths in DB
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
        VALUES ($1, $2, $3, NOW())
        ON CONFLICT (idrecord) DO UPDATE
        SET before_model_url = EXCLUDED.before_model_url,
            before_model_bin_url = EXCLUDED.before_model_bin_url,
-           before_uploaded_at = NOW()
-       RETURNING *`,
-      [req.body.idrecord, gltfUrl, binUrl]
+           before_uploaded_at = NOW()`,
+      [idrecord, gltfPath, binPath]
     );
 
-    res.json({ success: true, gltfUrl, binUrl });
-  } catch (err) {
-    console.error("Upload failed:", err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-app.get('/test-model/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(
-      'SELECT before_model_json FROM dental_models WHERE id = $1',
-      [id]
-    );
-
-    if (!result.rows[0] || !result.rows[0].before_model_json) {
-      return res.status(404).send('Model not found');
-    }
-
-    const gltfJsonObj = result.rows[0].before_model_json;
-
-    if (typeof gltfJsonObj !== 'object') {
-      console.warn(`⚠️ DB GLTF JSON for model ${id} is not an object`);
-    } else {
-      console.log(`✅ DB GLTF JSON for model ${id} is valid`);
-    }
-
-    const gltfContent = JSON.stringify(gltfJsonObj, null, 2);
-
-    // Send as downloadable .gltf
-    res.setHeader('Content-Type', 'model/gltf+json');
-    res.setHeader('Content-Disposition', `attachment; filename="DentalModel_${id}.gltf"`);
-    res.send(gltfContent);
+    res.json({ success: true, gltfPath, binPath });
 
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error retrieving GLTF');
+    res.status(500).json({ success: false, error: err.message });
   }
 });
-
-
-
-
 
 
 app.get('/api/reports/payments', async (req, res) => {
