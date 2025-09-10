@@ -180,11 +180,16 @@ const { Storage } = require('@google-cloud/storage');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
+
 // Multer temporary folder
 const upload = multer({ dest: 'temp/' });
 
+// Write key from environment variable to a temporary file at runtime
+const keyFilePath = path.join(__dirname, 'service-account.json');
+fs.writeFileSync(keyFilePath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+
 // Google Cloud Storage setup
-const storage = new Storage({ keyFilename: path.join(__dirname, 'service-account.json') });
+const storage = new Storage({ keyFilename: keyFilePath });
 const bucket = storage.bucket('toothpix-models');
 
 // Upload BEFORE model (accept GLTF and optional BIN)
