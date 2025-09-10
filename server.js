@@ -189,14 +189,21 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
     const gltfName = req.file.filename + path.extname(originalName);
     const gltfPath = path.join("uploads", gltfName);
 
-    // Move uploaded file to /uploads
     fs.renameSync(req.file.path, gltfPath);
     const fileUrl = `/uploads/${path.basename(gltfPath)}`;
 
-    // Read file content to store in DB
+    // Read file content
     const gltfContent = fs.readFileSync(gltfPath, "utf8");
 
-    // Insert or update DB with URL and JSON content
+    // --- CHECK JSON STRUCTURE ---
+    try {
+      JSON.parse(gltfContent);
+      console.log("✅ GLTF JSON looks valid");
+    } catch (err) {
+      console.warn("⚠️ GLTF JSON may be invalid:", err.message);
+    }
+
+    // Insert/update DB
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_model_json, before_uploaded_at)
        VALUES ($1, $2, $3, NOW())
@@ -216,29 +223,31 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
 });
 
 
-
 app.get('/test-model/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
-      'SELECT before_model_url FROM dental_models WHERE id = $1',
+      'SELECT before_model_url, before_model_json FROM dental_models WHERE id = $1',
       [id]
     );
 
-    if (!result.rows[0] || !result.rows[0].before_model_url) {
-      return res.status(404).send('Model not found');
+    if (!result.rows[0]) return res.status(404).send('Model not found');
+
+    const { before_model_url, before_model_json } = result.rows[0];
+
+    // Optional: test JSON stored in DB
+    try {
+      JSON.parse(before_model_json);
+      console.log(`✅ DB GLTF JSON for model ${id} is valid`);
+    } catch (err) {
+      console.warn(`⚠️ DB GLTF JSON for model ${id} may be invalid:`, err.message);
     }
 
-    // Remove leading slash if it exists
-    const relativePath = result.rows[0].before_model_url.replace(/^\/+/, '');
-
-    // Resolve relative to project root
+    // Send file from disk
+    const relativePath = before_model_url.replace(/^\/+/, '');
     const filePath = path.join(__dirname, relativePath);
 
-    if (!fs.existsSync(filePath)) {
-      console.log('File not found at:', filePath);
-      return res.status(404).send('File not found on server');
-    }
+    if (!fs.existsSync(filePath)) return res.status(404).send('File not found on server');
 
     const file = fs.readFileSync(filePath);
     res.setHeader('Content-Type', 'model/gltf+json');
@@ -249,6 +258,7 @@ app.get('/test-model/:id', async (req, res) => {
     res.status(500).send('Error retrieving GLTF');
   }
 });
+
 
 
 
@@ -2922,6 +2932,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
