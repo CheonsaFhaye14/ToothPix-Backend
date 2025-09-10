@@ -189,21 +189,24 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
     const gltfName = req.file.filename + path.extname(originalName);
     const gltfPath = path.join("uploads", gltfName);
 
+    // Move file to proper location
     fs.renameSync(req.file.path, gltfPath);
     const fileUrl = `/uploads/${path.basename(gltfPath)}`;
 
     // Read file content
-    const gltfContent = fs.readFileSync(gltfPath, "utf8");
+    const gltfContentStr = fs.readFileSync(gltfPath, "utf8");
 
-    // --- CHECK JSON STRUCTURE ---
+    // Parse string into object for JSONB
+    let gltfContentObj;
     try {
-      JSON.parse(gltfContent);
+      gltfContentObj = JSON.parse(gltfContentStr);
       console.log("✅ GLTF JSON looks valid");
     } catch (err) {
       console.warn("⚠️ GLTF JSON may be invalid:", err.message);
+      return res.status(400).json({ success: false, error: "Invalid GLTF JSON" });
     }
 
-    // Insert/update DB
+    // Insert/update DB (JSONB column)
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_model_json, before_uploaded_at)
        VALUES ($1, $2, $3, NOW())
@@ -212,7 +215,7 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
            before_model_json = EXCLUDED.before_model_json,
            before_uploaded_at = NOW()
        RETURNING *`,
-      [req.body.idrecord, fileUrl, gltfContent]
+      [req.body.idrecord, fileUrl, gltfContentObj] // <-- Pass object, not string
     );
 
     res.json({ success: true, url: fileUrl });
@@ -221,6 +224,7 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 app.get('/test-model/:id', async (req, res) => {
   try {
@@ -2926,6 +2930,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
