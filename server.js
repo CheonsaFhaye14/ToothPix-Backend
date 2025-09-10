@@ -212,6 +212,7 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
   }
 });
 
+
 app.get('/test-model/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -224,16 +225,18 @@ app.get('/test-model/:id', async (req, res) => {
       return res.status(404).send('Model not found');
     }
 
-    // Make the path absolute
-    const filePath = path.join(__dirname, result.rows[0].before_model_url);
+    // Remove leading slash if it exists
+    const relativePath = result.rows[0].before_model_url.replace(/^\/+/, '');
 
-    // Check if file exists
+    // Resolve relative to project root
+    const filePath = path.join(__dirname, relativePath);
+
     if (!fs.existsSync(filePath)) {
+      console.log('File not found at:', filePath);
       return res.status(404).send('File not found on server');
     }
 
     const file = fs.readFileSync(filePath);
-
     res.setHeader('Content-Type', 'model/gltf+json');
     res.send(file);
 
@@ -2915,6 +2918,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
