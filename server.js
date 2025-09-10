@@ -2223,14 +2223,23 @@ app.get('/api/app/users', async (req, res) => {
       return res.status(404).json({ message: 'No users found' });
     }
 
+    // Transform birthdate for each row
+    const formattedRows = result.rows.map(user => ({
+      ...user,
+      birthdate: user.birthdate
+        ? new Date(user.birthdate).toISOString().split('T')[0]
+        : null
+    }));
+
     res.status(200).json({
-      records: result.rows
+      records: formattedRows
     });
   } catch (err) {
     console.error('Error fetching users:', err.message);
     res.status(500).json({ message: 'Error fetching users', error: err.message });
   }
 });
+
 
 // // Update a record
 // app.put('/api/app/records/:id', async (req, res) => {
@@ -2931,6 +2940,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
