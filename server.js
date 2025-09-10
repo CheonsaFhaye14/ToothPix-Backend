@@ -2685,14 +2685,30 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    const user = result.rows[0];
+
+    // Format birthdate
+    const formattedUser = {
+      ...user,
+      birthdate: user.birthdate
+        ? new Date(user.birthdate).toISOString().split('T')[0]
+        : null
+    };
+
+    // Remove sensitive fields
+    delete formattedUser.password;
+    delete formattedUser.reset_token;
+
     res.status(200).json({
-      profile: result.rows[0]
+      profile: formattedUser
     });
+
   } catch (err) {
     console.error("Error retrieving profile:", err.message);
     res.status(500).json({ message: 'Error retrieving profile' });
   }
 });
+
 
 // Update profile route
 app.post('/api/app/profile', authenticateToken, async (req, res) => {
@@ -2925,6 +2941,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
