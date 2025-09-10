@@ -229,13 +229,16 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
 app.get('/test-model/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Fetch the JSON from DB
     const result = await pool.query(
       'SELECT before_model_json FROM dental_models WHERE id = $1',
       [id]
     );
 
-    if (!result.rows[0] || !result.rows[0].before_model_json)
+    if (!result.rows[0] || !result.rows[0].before_model_json) {
       return res.status(404).send('Model not found');
+    }
 
     const gltfJsonObj = result.rows[0].before_model_json;
 
@@ -246,9 +249,12 @@ app.get('/test-model/:id', async (req, res) => {
       console.log(`✅ DB GLTF JSON for model ${id} is valid`);
     }
 
-    // Send as JSON string
-    res.setHeader('Content-Type', 'model/gltf+json');
-    res.send(JSON.stringify(gltfJsonObj));
+    // Write JSON to a temporary .gltf file
+    const tempFilePath = path.join(__dirname, `temp_model_${id}.gltf`);
+    fs.writeFileSync(tempFilePath, JSON.stringify(gltfJsonObj));
+
+    // Serve the .gltf file
+    res.sendFile(tempFilePath, { headers: { 'Content-Type': 'model/gltf+json' } });
 
   } catch (err) {
     console.error(err);
@@ -2940,6 +2946,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
