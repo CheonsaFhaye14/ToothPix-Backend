@@ -213,10 +213,14 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
 });
 
 app.get('/test-model', async (req, res) => {
-  const result = await pool.query('SELECT gltf_data FROM models WHERE id = $1', [1]);
+  const result = await pool.query(
+    'SELECT before_model_json FROM dental_models WHERE id = $1',
+    [1]
+  );
   res.setHeader('Content-Type', 'model/gltf+json');
-  res.send(result.rows[0].gltf_data);
+  res.send(result.rows[0].before_model_json);
 });
+
 
 
 
@@ -2889,6 +2893,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
