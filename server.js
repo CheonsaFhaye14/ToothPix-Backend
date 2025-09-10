@@ -212,13 +212,35 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
   }
 });
 
-app.get('/test-model', async (req, res) => {
-  const result = await pool.query(
-    'SELECT before_model_json FROM dental_models WHERE id = $1',
-    [1]
-  );
-  res.setHeader('Content-Type', 'model/gltf+json');
-  res.send(result.rows[0].before_model_json);
+app.get('/test-model/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      'SELECT before_model_url FROM dental_models WHERE id = $1',
+      [id]
+    );
+
+    if (!result.rows[0] || !result.rows[0].before_model_url) {
+      return res.status(404).send('Model not found');
+    }
+
+    // Make the path absolute
+    const filePath = path.join(__dirname, result.rows[0].before_model_url);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send('File not found on server');
+    }
+
+    const file = fs.readFileSync(filePath);
+
+    res.setHeader('Content-Type', 'model/gltf+json');
+    res.send(file);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error retrieving GLTF');
+  }
 });
 
 
@@ -2893,6 +2915,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
