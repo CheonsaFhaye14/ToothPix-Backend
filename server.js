@@ -175,34 +175,31 @@ cron.schedule('* * * * *', async () => {
     }
   }
 });
-const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
-
-const upload = multer({ dest: "uploads/" });
 
 // Upload BEFORE model (accept GLTF directly)
 app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => {
   try {
-    // Get original filename
     const originalName = req.file.originalname;
-    const gltfName = req.file.filename + path.extname(originalName); // preserve extension
+    const gltfName = req.file.filename + path.extname(originalName);
     const gltfPath = path.join("uploads", gltfName);
 
-    // Move uploaded file to proper path
+    // Move uploaded file to /uploads
     fs.renameSync(req.file.path, gltfPath);
-
     const fileUrl = `/uploads/${path.basename(gltfPath)}`;
 
-    // Insert or update in DB
+    // Read file content to store in DB
+    const gltfContent = fs.readFileSync(gltfPath, "utf8");
+
+    // Insert or update DB with URL and JSON content
     await pool.query(
-      `INSERT INTO dental_models (idrecord, before_model_url, before_uploaded_at)
-       VALUES ($1, $2, NOW())
+      `INSERT INTO dental_models (idrecord, before_model_url, before_model_json, before_uploaded_at)
+       VALUES ($1, $2, $3, NOW())
        ON CONFLICT (idrecord) DO UPDATE
        SET before_model_url = EXCLUDED.before_model_url,
+           before_model_json = EXCLUDED.before_model_json,
            before_uploaded_at = NOW()
        RETURNING *`,
-      [req.body.idrecord, fileUrl]
+      [req.body.idrecord, fileUrl, gltfContent]
     );
 
     res.json({ success: true, url: fileUrl });
@@ -211,6 +208,7 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 
 app.get('/test-model/:id', async (req, res) => {
@@ -2918,6 +2916,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
