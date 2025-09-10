@@ -191,7 +191,6 @@ fs.writeFileSync(keyFilePath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 // Google Cloud Storage setup
 const storage = new Storage({ keyFilename: keyFilePath });
 const bucket = storage.bucket('toothpix-models');
-
 // Upload BEFORE model (accept GLTF and optional BIN)
 app.post('/api/uploadModel/before', upload.fields([
   { name: 'gltf', maxCount: 1 },
@@ -200,30 +199,34 @@ app.post('/api/uploadModel/before', upload.fields([
   try {
     const idrecord = req.body.idrecord;
 
-    // Upload GLTF
+    // Upload GLTF with unique name
     const gltfFile = req.files['gltf'][0];
-    const gltfPath = `models/${gltfFile.originalname}`;
+    const gltfFileName = `DentalModel_${idrecord}.gltf`;
+    const gltfPath = `models/${gltfFileName}`;
     await bucket.upload(gltfFile.path, {
       destination: gltfPath,
       contentType: 'model/gltf+json'
     });
 
     // Upload BIN if exists
-    let binPath = null;
+    let binUrl = null;
     if (req.files['bin']) {
       const binFile = req.files['bin'][0];
-      binPath = `models/${binFile.originalname}`;
+      const binFileName = `DentalModel_${idrecord}.bin`;
+      const binPath = `models/${binFileName}`;
       await bucket.upload(binFile.path, {
         destination: binPath,
         contentType: 'application/octet-stream'
       });
+      binUrl = `https://storage.googleapis.com/toothpix-models/${binPath}`;
+      fs.unlinkSync(binFile.path);
     }
 
-    // Delete temp files
+    // Delete temp GLTF
     fs.unlinkSync(gltfFile.path);
-    if (req.files['bin']) fs.unlinkSync(req.files['bin'][0].path);
 
-    // Save GCS paths in DB
+    // Save public GCS URLs in DB
+    const gltfUrl = `https://storage.googleapis.com/toothpix-models/${gltfPath}`;
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
        VALUES ($1, $2, $3, NOW())
@@ -231,16 +234,17 @@ app.post('/api/uploadModel/before', upload.fields([
        SET before_model_url = EXCLUDED.before_model_url,
            before_model_bin_url = EXCLUDED.before_model_bin_url,
            before_uploaded_at = NOW()`,
-      [idrecord, gltfPath, binPath]
+      [idrecord, gltfUrl, binUrl]
     );
 
-    res.json({ success: true, gltfPath, binPath });
+    res.json({ success: true, gltfUrl, binUrl });
 
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 
 app.get('/api/reports/payments', async (req, res) => {
@@ -2921,6 +2925,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
