@@ -222,42 +222,36 @@ app.post("/api/uploadModel/before", upload.single("model"), async (req, res) => 
   }
 });
 
-
 app.get('/test-model/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
-      'SELECT before_model_url, before_model_json FROM dental_models WHERE id = $1',
+      'SELECT before_model_json FROM dental_models WHERE id = $1',
       [id]
     );
 
-    if (!result.rows[0]) return res.status(404).send('Model not found');
+    if (!result.rows[0] || !result.rows[0].before_model_json)
+      return res.status(404).send('Model not found');
 
-    const { before_model_url, before_model_json } = result.rows[0];
+    const gltfJson = result.rows[0].before_model_json;
 
-    // Optional: test JSON stored in DB
+    // Validate JSON
     try {
-      JSON.parse(before_model_json);
+      JSON.parse(gltfJson);
       console.log(`✅ DB GLTF JSON for model ${id} is valid`);
     } catch (err) {
       console.warn(`⚠️ DB GLTF JSON for model ${id} may be invalid:`, err.message);
     }
 
-    // Send file from disk
-    const relativePath = before_model_url.replace(/^\/+/, '');
-    const filePath = path.join(__dirname, relativePath);
-
-    if (!fs.existsSync(filePath)) return res.status(404).send('File not found on server');
-
-    const file = fs.readFileSync(filePath);
     res.setHeader('Content-Type', 'model/gltf+json');
-    res.send(file);
+    res.send(gltfJson);
 
   } catch (err) {
     console.error(err);
     res.status(500).send('Error retrieving GLTF');
   }
 });
+
 
 
 
@@ -2932,6 +2926,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
