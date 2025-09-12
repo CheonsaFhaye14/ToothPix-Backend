@@ -2228,23 +2228,27 @@ app.get('/api/app/users', async (req, res) => {
 });
 
 
-app.get('/api/app/3d_dentalmodels', async (req, res) => {
-  const query = 'SELECT * FROM dental_models';
-
+app.get('/api/app/dental_models/:idrecord', async (req, res) => {
+  const { idrecord } = req.params;
+  const query = 'SELECT * FROM dental_models WHERE idrecord = $1';
+  
   try {
-    const result = await pool.query(query);
+    const result = await pool.query(query, [idrecord]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No dental models found' });
+      return res.status(404).json({ message: 'No model found for this idrecord' });
     }
 
-    // ✅ Use result.rows instead of undefined variable "models"
-    return res.status(200).json({
-      models: result.rows
+    const row = result.rows[0];
+    return res.json({
+      id: row.id,
+      idrecord: row.idrecord,
+      gltfUrl: row.before_model_url,
+      binUrl: row.before_model_bin_url,
     });
   } catch (err) {
-    console.error('Error fetching models:', err.message);
-    return res.status(500).json({ message: 'Error fetching models', error: err.message });
+    console.error('Error fetching model:', err.message);
+    return res.status(500).json({ message: 'Error fetching model', error: err.message });
   }
 });
 
@@ -2964,6 +2968,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
