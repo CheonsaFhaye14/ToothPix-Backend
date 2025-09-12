@@ -191,7 +191,9 @@ fs.writeFileSync(keyFilePath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 // Google Cloud Storage setup
 const storage = new Storage({ keyFilename: keyFilePath });
 const bucket = storage.bucket('toothpix-models');
-// Upload BEFORE model (accept GLTF and optional BIN)
+
+
+// 📌 Upload BEFORE model (GLTF + optional BIN)
 app.post('/api/uploadModel/before', upload.fields([
   { name: 'gltf', maxCount: 1 },
   { name: 'bin', maxCount: 1 }
@@ -199,7 +201,7 @@ app.post('/api/uploadModel/before', upload.fields([
   try {
     const idrecord = req.body.idrecord;
 
-    // Upload GLTF with unique name
+    // Upload GLTF
     const gltfFile = req.files['gltf'][0];
     const gltfFileName = `DentalModel_${idrecord}.gltf`;
     const gltfPath = `models/${gltfFileName}`;
@@ -207,26 +209,22 @@ app.post('/api/uploadModel/before', upload.fields([
       destination: gltfPath,
       contentType: 'model/gltf+json'
     });
+    fs.unlinkSync(gltfFile.path); // delete temp
 
     // Upload BIN if exists
-    let binUrl = null;
+    let binPath = null;
     if (req.files['bin']) {
       const binFile = req.files['bin'][0];
       const binFileName = `DentalModel_${idrecord}.bin`;
-      const binPath = `models/${binFileName}`;
+      binPath = `models/${binFileName}`;
       await bucket.upload(binFile.path, {
         destination: binPath,
         contentType: 'application/octet-stream'
       });
-      binUrl = `https://storage.googleapis.com/toothpix-models/${binPath}`;
-      fs.unlinkSync(binFile.path);
+      fs.unlinkSync(binFile.path); // delete temp
     }
 
-    // Delete temp GLTF
-    fs.unlinkSync(gltfFile.path);
-
-    // Save public GCS URLs in DB
-    const gltfUrl = `https://storage.googleapis.com/toothpix-models/${gltfPath}`;
+    // Store only object paths (not public URLs)
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
        VALUES ($1, $2, $3, NOW())
@@ -234,14 +232,55 @@ app.post('/api/uploadModel/before', upload.fields([
        SET before_model_url = EXCLUDED.before_model_url,
            before_model_bin_url = EXCLUDED.before_model_bin_url,
            before_uploaded_at = NOW()`,
-      [idrecord, gltfUrl, binUrl]
+      [idrecord, gltfPath, binPath]
     );
 
-    return res.json({ success: true, gltfUrl, binUrl });
+    return res.json({ success: true, gltfPath, binPath });
 
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// 📌 Fetch record + generate signed URLs
+app.get('/api/app/dental_models/:idrecord', async (req, res) => {
+  const { idrecord } = req.params;
+  const query = 'SELECT * FROM dental_models WHERE idrecord = $1';
+
+  try {
+    const result = await pool.query(query, [idrecord]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No model found for this idrecord' });
+    }
+
+    const row = result.rows[0];
+
+    // Generate signed URLs (valid 10 minutes)
+    const [gltfSignedUrl] = await bucket.file(row.before_model_url).getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 10 * 60 * 1000,
+    });
+
+    let binSignedUrl = null;
+    if (row.before_model_bin_url) {
+      [binSignedUrl] = await bucket.file(row.before_model_bin_url).getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 10 * 60 * 1000,
+      });
+    }
+
+    return res.json({
+      id: row.id,
+      idrecord: row.idrecord,
+      gltfUrl: gltfSignedUrl,
+      binUrl: binSignedUrl,
+    });
+  } catch (err) {
+    console.error('Error fetching model:', err.message);
+    return res.status(500).json({ message: 'Error fetching model', error: err.message });
   }
 });
 
@@ -2228,30 +2267,6 @@ app.get('/api/app/users', async (req, res) => {
 });
 
 
-app.get('/api/app/dental_models/:idrecord', async (req, res) => {
-  const { idrecord } = req.params;
-  const query = 'SELECT * FROM dental_models WHERE idrecord = $1';
-  
-  try {
-    const result = await pool.query(query, [idrecord]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No model found for this idrecord' });
-    }
-
-    const row = result.rows[0];
-    return res.json({
-      id: row.id,
-      idrecord: row.idrecord,
-      gltfUrl: row.before_model_url,
-      binUrl: row.before_model_bin_url,
-    });
-  } catch (err) {
-    console.error('Error fetching model:', err.message);
-    return res.status(500).json({ message: 'Error fetching model', error: err.message });
-  }
-});
-
 
 // // Update a record
 // app.put('/api/app/records/:id', async (req, res) => {
@@ -2968,6 +2983,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
