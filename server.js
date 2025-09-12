@@ -2197,6 +2197,8 @@ app.post('/api/app/records', async (req, res) => {
 //   }
 // });
 
+
+
 // Get all users
 app.get('/api/app/users', async (req, res) => {
   const query = 'SELECT * FROM users';
@@ -2222,6 +2224,27 @@ app.get('/api/app/users', async (req, res) => {
   } catch (err) {
     console.error('Error fetching users:', err.message);
     return res.status(500).json({ message: 'Error fetching users', error: err.message });
+  }
+});
+
+
+app.get('/api/app/3d_dentalmodels', async (req, res) => {
+  const query = 'SELECT * FROM dental_models';
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No dental models found' });
+    }
+
+    // ✅ Use result.rows instead of undefined variable "models"
+    return res.status(200).json({
+      models: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching models:', err.message);
+    return res.status(500).json({ message: 'Error fetching models', error: err.message });
   }
 });
 
@@ -2941,6 +2964,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
