@@ -422,8 +422,10 @@ app.get('/api/website/3dmodels', async (req, res) => {
     SELECT
       r.idrecord,
       rm.id AS model_id,
-      rm.before_model_url,
-      rm.after_model_url,
+      rm.before_model_bin_url,
+      rm.after_model_bin_url,
+      rm.before_model_json,
+      rm.after_model_json,
       rm.created_at AS model_created_at,
       CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
       CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
@@ -2983,6 +2985,7 @@ app.delete('/api/app/users/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
