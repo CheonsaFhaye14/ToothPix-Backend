@@ -2281,16 +2281,21 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
   const adminId = req.body.admin_id;
 
   try {
+    // 1️⃣ Get activity log
     const logResult = await pool.query(
       'SELECT * FROM activity_logs WHERE id = $1',
       [logId]
     );
 
-    if (!logResult.rows.length) return res.status(404).json({ message: 'Activity log not found' });
+    if (!logResult.rows.length) {
+      return res.status(404).json({ message: 'Activity log not found' });
+    }
 
     const log = logResult.rows[0];
 
-    if (log.is_undone) return res.status(400).json({ message: 'This action has already been undone' });
+    if (log.is_undone) {
+      return res.status(400).json({ message: 'This action has already been undone' });
+    }
 
     const undoData = log.undo_data ? JSON.parse(log.undo_data) : null;
 
@@ -2298,6 +2303,7 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       return res.status(400).json({ message: 'No undo data available' });
     }
 
+    // 2️⃣ Undo based on action type
     if (log.action === 'EDIT') {
       const fields = Object.keys(undoData.data);
       const values = Object.values(undoData.data);
@@ -2321,27 +2327,42 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       await pool.query(query, Object.values(undoData.data));
 
     } else if (log.action === 'ADD') {
+      const primaryKey = undoData.primary_key || 'idusers'; // fallback to idusers
+      if (!undoData.data[primaryKey]) {
+        return res.status(400).json({ message: 'Invalid undo data for ADD action' });
+      }
+
       const query = `
         DELETE FROM ${log.table_name}
-        WHERE idusers = $1
+        WHERE ${primaryKey} = $1
       `;
-      await pool.query(query, [log.record_id]);
+      await pool.query(query, [undoData.data[primaryKey]]);
     }
 
+    // 3️⃣ Mark log as undone
     await pool.query(
       `UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`,
       [logId]
     );
 
-    await logActivity(adminId, 'UNDO', log.table_name, log.record_id, `Undid activity log ID ${logId}`, null);
+    // 4️⃣ Log undo action
+    await logActivity(
+      adminId || null,
+      'UNDO',
+      log.table_name,
+      log.record_id,
+      `Undid activity log ID ${logId}`,
+      null
+    );
 
     return res.status(200).json({ message: 'Undo successful' });
 
   } catch (error) {
-    console.error('Error performing undo:', error.message);
+    console.error('Error performing undo:', error);
     return res.status(500).json({ message: 'Error performing undo', error: error.message });
   }
 });
+
 
 app.get('/api/app/records', async (req, res) => {
   const query = `
@@ -2538,8 +2559,12 @@ await logActivity(
   'users',
   newUser.idusers,
   `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
-  { data: { idusers: newUser.idusers } } // for clarity in undo
+  {
+    primary_key: "idusers", // important for undo
+    data: { idusers: newUser.idusers }
+  }
 );
+
 
 
     return res.status(201).json({
@@ -3577,6 +3602,7 @@ app.get('/api/website/activity_logs', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
