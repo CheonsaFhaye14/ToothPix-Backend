@@ -93,6 +93,31 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+// 🛡️ Middleware for Admin Panel
+const authenticateAdmin = (req, res, next) => {
+  const { authorization } = req.headers;
+
+  if (!authorization) {
+    return res.status(401).json({ message: "No admin token provided" });
+  }
+
+  const token = authorization.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Check if the token belongs to an admin
+    if (decoded.usertype !== 'admin') {
+      return res.status(403).json({ message: "Access denied. Admins only." });
+    }
+
+    req.user = decoded; // contains { idusers, username, usertype }
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Token invalid or expired" });
+  }
+};
+
 // Example of logging an environment variable
 console.log("Value before JSON.parse:", process.env.SOMETHING);
 
@@ -267,58 +292,69 @@ const storage = new Storage({ keyFilename: keyFilePath });
 const bucket = storage.bucket('toothpix-models');
 
 // 📌 Route to upload "BEFORE" dental 3D model (GLTF + optional BIN)
-app.post('/api/uploadModel/before', 
+app.post(
+  '/api/uploadModel/before',
+  authenticateAdmin, // ✅ Protect this route for admins only
   upload.fields([
-    { name: 'gltf', maxCount: 1 },  // Accept one GLTF file
-    { name: 'bin', maxCount: 1 }    // Accept one BIN file (optional)
-  ]), 
+    { name: 'gltf', maxCount: 1 },
+    { name: 'bin', maxCount: 1 },
+  ]),
   async (req, res) => {
-  try {
-    const idrecord = req.body.idrecord; // Get the record ID from the request
+    try {
+      const idrecord = req.body.idrecord; // Record ID from frontend
+      const adminId = req.user.idusers; // ✅ Admin ID from token
 
-    // -------- Upload GLTF file --------
-    const gltfFile = req.files['gltf'][0];
-    const gltfFileName = `DentalModel_${idrecord}.gltf`;
-    const gltfPath = `models/${gltfFileName}`; // Path in GCS bucket
-    await bucket.upload(gltfFile.path, {
-      destination: gltfPath,
-      contentType: 'model/gltf+json'
-    });
-    fs.unlinkSync(gltfFile.path); // Remove temporary local file
-
-    // -------- Upload BIN file (optional) --------
-    let binPath = null;
-    if (req.files['bin']) {
-      const binFile = req.files['bin'][0];
-      const binFileName = `DentalModel_${idrecord}.bin`;
-      binPath = `models/${binFileName}`; // Path in GCS bucket
-      await bucket.upload(binFile.path, {
-        destination: binPath,
-        contentType: 'application/octet-stream'
+      // -------- Upload GLTF file --------
+      const gltfFile = req.files['gltf'][0];
+      const gltfFileName = `DentalModel_${idrecord}.gltf`;
+      const gltfPath = `models/${gltfFileName}`;
+      await bucket.upload(gltfFile.path, {
+        destination: gltfPath,
+        contentType: 'model/gltf+json',
       });
-      fs.unlinkSync(binFile.path); // Remove temporary local file
+      fs.unlinkSync(gltfFile.path);
+
+      // -------- Upload BIN file (optional) --------
+      let binPath = null;
+      if (req.files['bin']) {
+        const binFile = req.files['bin'][0];
+        const binFileName = `DentalModel_${idrecord}.bin`;
+        binPath = `models/${binFileName}`;
+        await bucket.upload(binFile.path, {
+          destination: binPath,
+          contentType: 'application/octet-stream',
+        });
+        fs.unlinkSync(binFile.path);
+      }
+
+      // -------- Store the file paths in PostgreSQL --------
+      await pool.query(
+        `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (idrecord) DO UPDATE
+         SET before_model_url = EXCLUDED.before_model_url,
+             before_model_bin_url = EXCLUDED.before_model_bin_url,
+             before_uploaded_at = NOW()`,
+        [idrecord, gltfPath, binPath]
+      );
+
+      // -------- Log admin activity --------
+      await logActivity(
+        adminId,
+        'UPLOAD',
+        'dental_models',
+        idrecord,
+        `Uploaded BEFORE model for record ID ${idrecord}`
+      );
+
+      // ✅ Return success
+      return res.json({ success: true, gltfPath, binPath });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ success: false, error: err.message });
     }
-
-    // -------- Store the file paths in PostgreSQL --------
-    // Only store object paths, not public URLs
-    await pool.query(
-      `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (idrecord) DO UPDATE
-       SET before_model_url = EXCLUDED.before_model_url,
-           before_model_bin_url = EXCLUDED.before_model_bin_url,
-           before_uploaded_at = NOW()`,
-      [idrecord, gltfPath, binPath]
-    );
-
-    // Return success response
-    return res.json({ success: true, gltfPath, binPath });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, error: err.message });
   }
-});
+);
 
 // 📌 Fetch dental model for a specific record and generate temporary access URLs
 app.get('/api/app/dental_models/:idrecord', async (req, res) => {
@@ -776,22 +812,24 @@ app.post('/api/website/login', [
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
-    // Generate JWT token valid for 24 hours
+    // ✅ Generate JWT token valid for 24 hours, now includes admin ID
     const token = jwt.sign(
-      { username: user.username, usertype: user.usertype },
+      { idusers: user.idusers, username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
-    // Return success response with token and basic user info
+    // ✅ Return success response with token and full admin info
     return res.status(200).json({
       message: 'Admin login successful',
-      token: token,
+      token,
       user: {
+        idusers: user.idusers,
         username: user.username,
         usertype: user.usertype,
       },
     });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: 'Error querying database' });
@@ -999,9 +1037,9 @@ app.get('/api/website/admindashboard', async (req, res) => {
   }
 });
 
-// API endpoint to create a new appointment
+// API endpoint to create a new appointment (with activity log)
 app.post('/api/website/appointments', async (req, res) => {
-  const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
+  const { idpatient, iddentist, date, status, notes, idservice, patient_name, adminId } = req.body;
 
   // Validate required fields
   if ((!idpatient && !patient_name) || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
@@ -1045,7 +1083,18 @@ app.post('/api/website/appointments', async (req, res) => {
     });
     await Promise.all(serviceInsertPromises);
 
-    // 🛎 Send notifications to dentist (and patient if registered)
+    // 🪵 Log admin activity (if adminId provided)
+    if (adminId) {
+      await logActivity(
+        adminId,
+        'ADD',
+        'appointment',
+        appointment.idappointment,
+        `Created a new appointment (ID: ${appointment.idappointment}) for dentist ID ${iddentist}`
+      );
+    }
+
+    // 🛎 Send notifications
     const utcDate = new Date(appointment.date);
 
     const notify = async (id, role) => {
@@ -1069,12 +1118,12 @@ app.post('/api/website/appointments', async (req, res) => {
       }
     };
 
-    if (idpatient) await notify(idpatient, 'patient'); // Notify patient if registered
-    await notify(iddentist, 'dentist'); // Always notify dentist
+    if (idpatient) await notify(idpatient, 'patient');
+    await notify(iddentist, 'dentist');
 
-    // Return created appointment data
+    // ✅ Return response
     return res.status(201).json({
-      message: 'Appointment created and notifications sent successfully',
+      message: 'Appointment created, notifications sent, and activity logged successfully',
       appointment,
     });
 
@@ -1083,6 +1132,7 @@ app.post('/api/website/appointments', async (req, res) => {
     return res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
+
 
 // API endpoint to get patient reports
 app.get('/api/website/report/patients', async (req, res) => {
@@ -3123,10 +3173,19 @@ endpoints.forEach(e => {
   console.log(`${e.methods.join(', ')} ${e.path}`); // Example output: GET /api/app/users
 });
 
+async function logActivity(adminId, action, tableName, recordId, description) {
+  await pool.query(
+    `INSERT INTO activity_logs (admin_id, action, table_name, record_id, description)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [adminId, action, tableName, recordId, description]
+  );
+}
+
 // Start Server
 // This starts the Express application and makes it listen on the specified PORT.
 // When the server is running, it logs a message showing the active port.
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
