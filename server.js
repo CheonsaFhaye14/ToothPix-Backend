@@ -3595,6 +3595,28 @@ app.get('/api/website/activity_logs', async (req, res) => {
   }
 });
 
+app.delete('/api/website/activity_logs/:id', async (req, res) => {
+  const logId = req.params.id;
+
+  try {
+    const logResult = await pool.query(
+      'SELECT * FROM activity_logs WHERE id = $1',
+      [logId]
+    );
+
+    if (logResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Activity log not found' });
+    }
+
+    await pool.query('DELETE FROM activity_logs WHERE id = $1', [logId]);
+
+    return res.status(200).json({ message: 'Activity log deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting activity log:', error.message);
+    return res.status(500).json({ message: 'Error deleting activity log', error: error.message });
+  }
+});
+
 
 // Start Server
 // This starts the Express application and makes it listen on the specified PORT.
@@ -3602,6 +3624,7 @@ app.get('/api/website/activity_logs', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
