@@ -2196,25 +2196,23 @@ app.put('/api/website/users/:id', async (req, res) => {
 
     const existingUser = userResult.rows[0];
 
+    // Check for duplicate username (ignore soft-deleted users)
+const usernameCheck = await pool.query(
+  'SELECT * FROM users WHERE username = $1 AND idusers != $2 AND is_deleted = FALSE',
+  [username, userId]
+);
+if (usernameCheck.rows.length > 0) {
+  return res.status(409).json({ message: 'Username already exists' });
+}
 
-    // Check for duplicate username
-    const usernameCheck = await pool.query(
-      'SELECT * FROM users WHERE username = $1 AND idusers != $2',
-      [username, userId]
-    );
-    if (usernameCheck.rows.length > 0) {
-      return res.status(409).json({ message: 'Username already exists' });
-    }
-
-
-    // Check for duplicate email
-    const emailCheck = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND idusers != $2',
-      [email, userId]
-    );
-    if (emailCheck.rows.length > 0) {
-      return res.status(409).json({ message: 'Email already exists' });
-    }
+// Check for duplicate email (ignore soft-deleted users)
+const emailCheck = await pool.query(
+  'SELECT * FROM users WHERE email = $1 AND idusers != $2 AND is_deleted = FALSE',
+  [email, userId]
+);
+if (emailCheck.rows.length > 0) {
+  return res.status(409).json({ message: 'Email already exists' });
+}
 
 
     let hashedPassword = existingUser.password;
@@ -2453,10 +2451,11 @@ app.post('/api/website/users', async (req, res) => {
 
   try {
     // ✅ Check if username or email already exists
-    const userCheck = await pool.query(
-      'SELECT * FROM users WHERE username = $1 OR email = $2',
-      [username, email]
-    );
+   const userCheck = await pool.query(
+  'SELECT * FROM users WHERE (username = $1 OR email = $2) AND is_deleted = FALSE',
+  [username, email]
+);
+
 
     if (userCheck.rows.length > 0) {
       return res.status(409).json({ message: 'Username or email already exists' });
@@ -3473,6 +3472,7 @@ async function logActivity(adminId, action, tableName, recordId, description) {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
