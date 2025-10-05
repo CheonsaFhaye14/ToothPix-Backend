@@ -2278,34 +2278,29 @@ app.put('/api/website/users/:id', async (req, res) => {
 
 app.post('/api/activity_logs/undo/:logId', async (req, res) => {
   const logId = req.params.logId;
-  const adminId = req.body.admin_id; // or from JWT
+  const adminId = req.body.admin_id;
 
   try {
-    // Get activity log
     const logResult = await pool.query(
       'SELECT * FROM activity_logs WHERE id = $1',
       [logId]
     );
 
-    if (logResult.rows.length === 0) {
-      return res.status(404).json({ message: 'Activity log not found' });
-    }
+    if (!logResult.rows.length) return res.status(404).json({ message: 'Activity log not found' });
 
     const log = logResult.rows[0];
 
-    if (log.is_undone) {
-      return res.status(400).json({ message: 'This action has already been undone' });
-    }
+    if (log.is_undone) return res.status(400).json({ message: 'This action has already been undone' });
 
-    const undoData = log.undo_data;
-    if (!undoData || Object.keys(undoData).length === 0) {
+    const undoData = log.undo_data ? JSON.parse(log.undo_data) : null;
+
+    if (!undoData || !undoData.data) {
       return res.status(400).json({ message: 'No undo data available' });
     }
 
     if (log.action === 'EDIT') {
-      // Restore old values
-      const fields = Object.keys(undoData);
-      const values = Object.values(undoData);
+      const fields = Object.keys(undoData.data);
+      const values = Object.values(undoData.data);
       const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
 
       const query = `
@@ -2314,25 +2309,31 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
         WHERE idusers = $${fields.length + 1}
       `;
       await pool.query(query, [...values, log.record_id]);
+
+    } else if (log.action === 'DELETE') {
+      const columns = Object.keys(undoData.data).join(', ');
+      const placeholders = Object.keys(undoData.data).map((_, idx) => `$${idx + 1}`).join(', ');
+
+      const query = `
+        INSERT INTO ${log.table_name} (${columns})
+        VALUES (${placeholders})
+      `;
+      await pool.query(query, Object.values(undoData.data));
+
+    } else if (log.action === 'ADD') {
+      const query = `
+        DELETE FROM ${log.table_name}
+        WHERE idusers = $1
+      `;
+      await pool.query(query, [log.record_id]);
     }
 
-    // Mark log as undone
     await pool.query(
-      `UPDATE activity_logs
-       SET is_undone = TRUE, undone_at = NOW()
-       WHERE id = $1`,
+      `UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`,
       [logId]
     );
 
-    // Log undo activity
-    await logActivity(
-      adminId,
-      'UNDO',
-      log.table_name,
-      log.record_id,
-      `Undid activity log ID ${logId}`,
-      null
-    );
+    await logActivity(adminId, 'UNDO', log.table_name, log.record_id, `Undid activity log ID ${logId}`, null);
 
     return res.status(200).json({ message: 'Undo successful' });
 
@@ -2531,14 +2532,15 @@ app.post('/api/website/users', async (req, res) => {
     const newUser = result.rows[0];
 
     // Log admin activity (undo for ADD = DELETE, no undo_data needed)
-    await logActivity(
-      adminId || null,
-      'ADD',
-      'users',
-      newUser.idusers,
-      `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
-      null // ✅ no need for extra undo data
-    );
+await logActivity(
+  adminId || null,
+  'ADD',
+  'users',
+  newUser.idusers,
+  `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
+  { data: { idusers: newUser.idusers } } // for clarity in undo
+);
+
 
     return res.status(201).json({
       message: 'User created successfully',
@@ -3575,6 +3577,7 @@ app.get('/api/website/activity_logs', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
