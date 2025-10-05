@@ -2154,6 +2154,8 @@ app.put('/api/app/users/:id', async (req, res) => {
 
 app.put('/api/website/users/:id', async (req, res) => {
   const userId = req.params.id;
+  const adminId = req.body.admin_id; // ✅ get admin ID from frontend
+
   const {
     username,
     email,
@@ -2187,7 +2189,9 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // ✅ Check if username already exists for another user
+    const existingUser = userResult.rows[0];
+
+    // ✅ Check for duplicate username
     const usernameCheck = await pool.query(
       'SELECT * FROM users WHERE username = $1 AND idusers != $2',
       [username, userId]
@@ -2196,7 +2200,7 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(409).json({ message: 'Username already exists' });
     }
 
-    // ✅ Check if email already exists for another user
+    // ✅ Check for duplicate email
     const emailCheck = await pool.query(
       'SELECT * FROM users WHERE email = $1 AND idusers != $2',
       [email, userId]
@@ -2205,7 +2209,6 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(409).json({ message: 'Email already exists' });
     }
 
-    const existingUser = userResult.rows[0];
     let hashedPassword = existingUser.password;
 
     // ✅ Only hash new password if changed
@@ -2213,7 +2216,7 @@ app.put('/api/website/users/:id', async (req, res) => {
       hashedPassword = await bcrypt.hash(password, 10);
     }
 
-    // ✅ Update user record in DB
+    // ✅ Prepare update query
     const updateQuery = `
       UPDATE users
       SET username = $1,
@@ -2249,11 +2252,29 @@ app.put('/api/website/users/:id', async (req, res) => {
     ];
 
     const result = await pool.query(updateQuery, values);
+    const updatedUser = result.rows[0];
+
+    // 🧾 Detect and log which fields changed
+    const changes = [];
+    const fields = ['username', 'email', 'usertype', 'firstname', 'lastname', 'birthdate', 'contact', 'address', 'gender', 'allergies', 'medicalhistory'];
+    
+    fields.forEach(field => {
+      if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
+        changes.push(`${field}: '${existingUser[field] || 'null'}' → '${updatedUser[field] || 'null'}'`);
+      }
+    });
+
+    const description = changes.length > 0
+      ? `Updated user ${firstname} ${lastname} (${changes.join(', ')})`
+      : `Updated user ${firstname} ${lastname} (no visible changes)`;
+
+    // ✅ Log the update activity
+    await logActivity(adminId, 'EDIT', 'users', userId, description);
 
     // ✅ Return updated user
     return res.status(200).json({
       message: 'User updated successfully',
-      user: result.rows[0],
+      user: updatedUser,
     });
 
   } catch (error) {
@@ -2261,7 +2282,6 @@ app.put('/api/website/users/:id', async (req, res) => {
     return res.status(500).json({ message: 'Error updating user', error: error.message });
   }
 });
-
 
 app.get('/api/app/records', async (req, res) => {
   const query = `
