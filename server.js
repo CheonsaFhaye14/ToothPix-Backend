@@ -1,87 +1,128 @@
+// ✅ Load environment variables from the .env file
 require('dotenv').config();
-const express = require('express');
-const { Pool } = require('pg');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const crypto = require('crypto');
-const nodemailer = require('nodemailer');
-const { body, validationResult } = require('express-validator');
-const cron = require('node-cron');
+
+// ✅ Import all required dependencies
+const express = require('express');           // Main web framework for creating the backend server
+const { Pool } = require('pg');               // PostgreSQL client for connecting to your database
+const bcrypt = require('bcryptjs');           // Used for hashing and comparing passwords
+const jwt = require('jsonwebtoken');          // Used for creating and verifying JWT tokens (for login sessions)
+const bodyParser = require('body-parser');    // Parses incoming request bodies (e.g., form data or JSON)
+const cors = require('cors');                 // Enables cross-origin requests (for connecting frontend and backend)
+const crypto = require('crypto');             // Provides encryption and random token generation (e.g., for password reset)
+const nodemailer = require('nodemailer');     // Sends emails (e.g., password reset, notifications)
+const { body, validationResult } = require('express-validator'); // Used to validate input fields
+const cron = require('node-cron');            // Runs scheduled background tasks (e.g., auto-delete old data)
+const admin = require('firebase-admin');      // For Firebase features like notifications
+
+// ✅ Create an Express application instance
 const app = express();
+
+// ✅ Define the server port (from .env or fallback to 3000)
 const PORT = process.env.APP_API_PORT || 3000;
- const admin = require('firebase-admin');
-// CORS configuration
+
+// List of allowed frontend URLs that can access this backend
 const allowedOrigins = [
-  process.env.FRONTEND_URL,           // e.g., https://example1.com
-  process.env.SECOND_FRONTEND_URL     // e.g., https://example2.com
+  process.env.FRONTEND_URL,          // GitHub-hosted frontend (deployed version)
+  process.env.SECOND_FRONTEND_URL    // Local frontend (for development/testing)
 ];
+
+// CORS (Cross-Origin Resource Sharing) options
+// This controls which origins (websites) can send requests to your server
 const corsOptions = {
   origin: (origin, callback) => {
+    // Allow requests if origin is in the allowed list or if no origin (like from Postman)
     if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
+      callback(null, true); // Allow the request
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error('Not allowed by CORS')); // Block unauthorized origins
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allowed HTTP methods
 };
-app.use(cors(corsOptions));
-app.use(bodyParser.json());
 
+// Apply CORS settings to the Express app
+app.use(cors(corsOptions));
+
+// Enable parsing of incoming JSON data in request bodies
+app.use(bodyParser.json());
 
 // PostgreSQL connection setup
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST,       // The host address of your PostgreSQL server (e.g., Render or local)
+  port: process.env.DB_PORT,       // The port number PostgreSQL is running on (default: 5432)
+  user: process.env.DB_USER,       // The PostgreSQL username (from your Render or local DB settings)
+  password: process.env.DB_PASSWORD, // The user's password
+  database: process.env.DB_NAME,   // The database name you want to connect to
   ssl: {
-    rejectUnauthorized: false,
+    rejectUnauthorized: false,     // Allows connection to cloud-hosted DBs with self-signed SSL certificates
   },
 });
 
+// Test database connection and log result
 pool.connect(err => {
   if (err) {
-    console.error('Error connecting to the database:', err.message);
+    console.error('❌ Error connecting to the database:', err.message);
     return;
   }
-  console.log('Connected to PostgreSQL Database');
+  console.log('✅ Connected to PostgreSQL Database');
 });
 
-// Middleware to authenticate JWT token
+// 🛡️ Middleware to authenticate JWT token
 const authenticateToken = (req, res, next) => {
-  const { authorization } = req.headers;
-  if (!authorization) return res.status(401).json({ message: "No token provided" });
+  const { authorization } = req.headers; // Extract the Authorization header
 
-  const token = authorization.split(" ")[1];
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.userId = decoded.userId; // Store userId in request object for next routes
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: 'Token invalid or expired' });
+  // If no Authorization header is found, deny access
+  if (!authorization) {
+    return res.status(401).json({ message: "No token provided" });
   }
-  };
- console.log("Value before JSON.parse:", process.env.SOMETHING);
 
-// Firebase admin setup
+  // Bearer tokens are usually sent as "Bearer <token>", so split it
+  const token = authorization.split(" ")[1];
+
+  try {
+    // Verify the token using your secret key
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Store decoded userId in the request object so next middleware/routes can use it
+    req.userId = decoded.userId;
+
+    next(); // Continue to the next middleware or route handler
+  } catch (err) {
+    // If token is invalid or expired
+    return res.status(401).json({ message: "Token invalid or expired" });
+  }
+};
+
+// Example of logging an environment variable
+console.log("Value before JSON.parse:", process.env.SOMETHING);
+
+// 🔥 Firebase Admin setup
+
+// Parse the service account credentials from your environment variable.
+// The GOOGLE_SERVICE_ACCOUNT should contain the entire JSON key from Firebase,
+// stored as a single-line string in your .env file.
 const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+
+// Log to confirm if the variable exists (for debugging)
 console.log('GOOGLE_SERVICE_ACCOUNT:', process.env.GOOGLE_SERVICE_ACCOUNT ? 'Exists' : 'Not set');
 
+// Initialize Firebase Admin with the credentials
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+  credential: admin.credential.cert(serviceAccount), // Authenticates your server to Firebase
 });
+
+// Confirm initialization
 console.log('✅ Firebase Admin initialized with project:', serviceAccount.project_id);
 
-// In-memory map for active tokens: idpatient => fcmToken
+// 🧠 In-memory map for active tokens (idpatient → fcmToken)
+// This temporarily stores active FCM tokens for logged-in users.
+// Example: activeTokens.set(3, 'abcd1234...') means patient with ID 3 is using that token.
 const activeTokens = new Map();
 
-// Send notification helper
+// 📩 Helper function to send a notification to a specific user
 async function sendNotificationToUser(fcmToken, appt, options = {}) {
   try {
+    // Convert the appointment date to a readable format in Asia/Manila timezone
     const utcDate = new Date(appt.date);
     const manilaDateStr = utcDate.toLocaleString('en-US', {
       timeZone: 'Asia/Manila',
@@ -93,138 +134,173 @@ async function sendNotificationToUser(fcmToken, appt, options = {}) {
       hour12: true,
     });
 
-  await admin.messaging().send({
-  token: fcmToken,
-  data: {
-    appointmentTime: utcDate.toISOString(),
-  },
-  notification: {
-    title: options.customTitle || 'Upcoming appointment',
-    body: options.customBody || `Your appointment is scheduled at ${manilaDateStr}`,
-  },
-  android: {
-    notification: {
-      channelId: 'appointment_channel_id', // ✅ Correct placement
-    },
-  },
-});
-    console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`);
+    // 🚀 Send the notification using Firebase Admin
+    await admin.messaging().send({
+      token: fcmToken, // The user's device FCM token
+      data: {
+        appointmentTime: utcDate.toISOString(), // Optional: extra data for your app
+      },
+      notification: {
+        title: options.customTitle || 'Upcoming appointment', // Notification title
+        body: options.customBody || `Your appointment is scheduled at ${manilaDateStr}`, // Notification message
+      },
+      android: {
+        notification: {
+          channelId: 'appointment_channel_id', // Must match the channel created in your mobile app
+        },
+      },
+    });
+
+    console.log(`✅ Sent notification to ${fcmToken.slice(0, 10)}...`); // Log confirmation
   } catch (error) {
-    console.error('❌ Error sending notification:', error);
+    console.error('❌ Error sending notification:', error); // Log any sending errors
   }
 }
 
-
-// Get appointments within 1-minute window of target dates
+// Get appointments that fall within a 1-minute window of the target dates
 async function getAppointmentsAtTimes(targetDates) {
- 
- const windowDuration = 30 * 1000; // 30 seconds
 
-const timeWindows = targetDates.map(date => {
-  const start = new Date(date.getTime() - windowDuration);
-  const end = new Date(date.getTime() + windowDuration);
-  return { start, end };
-});
+  const windowDuration = 30 * 1000; // 30 seconds before and after the target time
 
+  // Create small time windows (start and end) around each target date
+  const timeWindows = targetDates.map(date => {
+    const start = new Date(date.getTime() - windowDuration); // start time (30s before)
+    const end = new Date(date.getTime() + windowDuration);   // end time (30s after)
+    return { start, end };
+  });
 
+  // Build dynamic SQL conditions for multiple time windows
+  // Example: date BETWEEN $1 AND $2 OR date BETWEEN $3 AND $4 ...
   const conditions = timeWindows
     .map((_, idx) => `date BETWEEN $${idx * 2 + 1} AND $${idx * 2 + 2}`)
     .join(' OR ');
 
+  // Prepare parameter values for the SQL query
   const values = [];
   timeWindows.forEach(window => {
     values.push(window.start.toISOString());
     values.push(window.end.toISOString());
   });
 
-  const query = `SELECT * FROM appointment WHERE (${conditions}) `;
+  // SQL query to get appointments that match the time windows
+  const query = `SELECT * FROM appointment WHERE (${conditions})`;
 
   try {
+    // Run query and log the results
     const result = await pool.query(query, values);
-   console.log('Appointments fetched from DB:', result.rows);
+    console.log('Appointments fetched from DB:', result.rows);
 
-    return result.rows;
+    return result.rows; // return appointments found
   } catch (err) {
+    // If query fails, log the error and return an empty list
     console.error('DB query error:', err);
     return [];
   }
 }
 
-// Cron job to check appointments and notify logged-in users every 5 minutes
+// 🕒 Cron job to check upcoming appointments and notify logged-in users
+// This runs every minute to remind patients of their upcoming appointments
 cron.schedule('* * * * *', async () => {
-  console.log(`[CRON] Running at ${new Date().toISOString()}`);
+  console.log(`[CRON] Running appointment reminder check at ${new Date().toISOString()}`);
 
+  // Get the current date and time
   const now = new Date();
-  const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-  const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-  console.log('🗓 Checking appointment window from:', oneHourLater.toISOString(), 'and', oneDayLater.toISOString());
+  // Create reminder times: 3 days, 1 day, and 1 hour before the appointment
+  const threeDaysLater = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 days before
+  const oneDayLater = new Date(now.getTime() + 24 * 60 * 60 * 1000);        // 1 day before
+  const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);            // 1 hour before
 
-  const appointmentsToNotify = await getAppointmentsAtTimes([oneHourLater, oneDayLater]);
+  // Log which appointment times are being checked
+  console.log('🗓 Checking appointment windows for:', {
+    '3 days before': threeDaysLater.toISOString(),
+    '1 day before': oneDayLater.toISOString(),
+    '1 hour before': oneHourLater.toISOString(),
+  });
+
+  // Get all appointments that match any of the reminder times
+  const appointmentsToNotify = await getAppointmentsAtTimes([
+    threeDaysLater,
+    oneDayLater,
+    oneHourLater
+  ]);
+
+  // Log how many appointments were found
   console.log(`🔍 Found ${appointmentsToNotify.length} appointments to notify`);
 
+  // Loop through each appointment found
   for (const appt of appointmentsToNotify) {
+
+    // Get the patient’s Firebase Cloud Messaging (FCM) token from the database
     const { rows } = await pool.query('SELECT fcm_token FROM users WHERE idusers = $1', [appt.idpatient]);
     const token = rows[0]?.fcm_token;
    
+    // If the patient has an active FCM token, send a notification
     if (token) {
       await sendNotificationToUser(token, appt);
-      console.log(`📅 Appointment: ${appt.date.toISOString()} for patient ${appt.idpatient}`);
+      console.log(`📅 Notification sent for appointment on ${appt.date.toISOString()} (Patient ID: ${appt.idpatient})`);
     } else {
-      console.warn(`⚠️ User ${appt.idpatient} not logged in (no active token)`);
+      // If the user is not logged in or has no token, skip notification
+      console.warn(`⚠️ Skipped: User ${appt.idpatient} not logged in (no active token)`);
     }
   }
 });
 
-const { Storage } = require('@google-cloud/storage');
-const path = require('path');
-const multer = require('multer');
-const fs = require('fs');
+const { Storage } = require('@google-cloud/storage'); // Import Google Cloud Storage client
+const path = require('path');                         // Node.js module for working with file paths
+const multer = require('multer');                     // Middleware to handle file uploads
+const fs = require('fs');                             // Node.js module to interact with the file system
 
-// Multer temporary folder
+// Multer setup: store uploaded files temporarily in the "temp/" folder
 const upload = multer({ dest: 'temp/' });
 
-// Write key from environment variable to a temporary file at runtime
+// Write Google Cloud service account key from environment variable to a temp file
+// This allows the Google Cloud client to authenticate
 const keyFilePath = path.join(__dirname, 'service-account.json');
 fs.writeFileSync(keyFilePath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 
-// Google Cloud Storage setup
+// Google Cloud Storage client setup using the key file
 const storage = new Storage({ keyFilename: keyFilePath });
+
+// Reference a specific bucket in Google Cloud Storage
+// This bucket ('toothpix-models') will store your uploaded files
 const bucket = storage.bucket('toothpix-models');
 
-
-// 📌 Upload BEFORE model (GLTF + optional BIN)
-app.post('/api/uploadModel/before', upload.fields([
-  { name: 'gltf', maxCount: 1 },
-  { name: 'bin', maxCount: 1 }
-]), async (req, res) => {
+// 📌 Route to upload "BEFORE" dental 3D model (GLTF + optional BIN)
+app.post('/api/uploadModel/before', 
+  upload.fields([
+    { name: 'gltf', maxCount: 1 },  // Accept one GLTF file
+    { name: 'bin', maxCount: 1 }    // Accept one BIN file (optional)
+  ]), 
+  async (req, res) => {
   try {
-    const idrecord = req.body.idrecord;
+    const idrecord = req.body.idrecord; // Get the record ID from the request
 
-    // Upload GLTF
+    // -------- Upload GLTF file --------
     const gltfFile = req.files['gltf'][0];
     const gltfFileName = `DentalModel_${idrecord}.gltf`;
-    const gltfPath = `models/${gltfFileName}`;
+    const gltfPath = `models/${gltfFileName}`; // Path in GCS bucket
     await bucket.upload(gltfFile.path, {
       destination: gltfPath,
       contentType: 'model/gltf+json'
     });
-    fs.unlinkSync(gltfFile.path); // delete temp
+    fs.unlinkSync(gltfFile.path); // Remove temporary local file
 
-    // Upload BIN if exists
+    // -------- Upload BIN file (optional) --------
     let binPath = null;
     if (req.files['bin']) {
       const binFile = req.files['bin'][0];
       const binFileName = `DentalModel_${idrecord}.bin`;
-      binPath = `models/${binFileName}`;
+      binPath = `models/${binFileName}`; // Path in GCS bucket
       await bucket.upload(binFile.path, {
         destination: binPath,
         contentType: 'application/octet-stream'
       });
-      fs.unlinkSync(binFile.path); // delete temp
+      fs.unlinkSync(binFile.path); // Remove temporary local file
     }
 
-    // Store only object paths (not public URLs)
+    // -------- Store the file paths in PostgreSQL --------
+    // Only store object paths, not public URLs
     await pool.query(
       `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
        VALUES ($1, $2, $3, NOW())
@@ -235,6 +311,7 @@ app.post('/api/uploadModel/before', upload.fields([
       [idrecord, gltfPath, binPath]
     );
 
+    // Return success response
     return res.json({ success: true, gltfPath, binPath });
 
   } catch (err) {
@@ -243,27 +320,28 @@ app.post('/api/uploadModel/before', upload.fields([
   }
 });
 
-
-// 📌 Fetch record + generate signed URLs
+// 📌 Fetch dental model for a specific record and generate temporary access URLs
 app.get('/api/app/dental_models/:idrecord', async (req, res) => {
-  const { idrecord } = req.params;
+  const { idrecord } = req.params; // Get record ID from URL
   const query = 'SELECT * FROM dental_models WHERE idrecord = $1';
 
   try {
     const result = await pool.query(query, [idrecord]);
 
+    // If no record exists, return 404
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No model found for this idrecord' });
     }
 
     const row = result.rows[0];
 
-    // Generate signed URLs (valid 10 minutes)
+    // Generate signed URL for GLTF file (valid 10 minutes)
     const [gltfSignedUrl] = await bucket.file(row.before_model_url).getSignedUrl({
       action: 'read',
-      expires: Date.now() + 10 * 60 * 1000,
+      expires: Date.now() + 10 * 60 * 1000, // 10 minutes
     });
 
+    // Generate signed URL for BIN file if it exists
     let binSignedUrl = null;
     if (row.before_model_bin_url) {
       [binSignedUrl] = await bucket.file(row.before_model_bin_url).getSignedUrl({
@@ -272,6 +350,7 @@ app.get('/api/app/dental_models/:idrecord', async (req, res) => {
       });
     }
 
+    // Return signed URLs to frontend
     return res.json({
       id: row.id,
       idrecord: row.idrecord,
@@ -284,8 +363,7 @@ app.get('/api/app/dental_models/:idrecord', async (req, res) => {
   }
 });
 
-
-
+// 📌 Generate payment report for all records
 app.get('/api/reports/payments', async (req, res) => {
   const query = `
     SELECT 
@@ -296,13 +374,13 @@ app.get('/api/reports/payments', async (req, res) => {
       END AS patient_name,
       CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
       a.date AS appointment_date,
-      STRING_AGG(s.name, ', ') AS services,
-      SUM(s.price) AS total_price,
+      STRING_AGG(s.name, ', ') AS services, -- Combine all services for that appointment
+      SUM(s.price) AS total_price,          -- Total price of all services
       r.total_paid,
       r.paymentstatus
     FROM records r
-    LEFT JOIN users p ON p.idusers = r.idpatient
-    JOIN users d ON d.idusers = r.iddentist
+    LEFT JOIN users p ON p.idusers = r.idpatient       -- Patient (if exists)
+    JOIN users d ON d.idusers = r.iddentist            -- Dentist
     JOIN appointment a ON a.idappointment = r.idappointment
     JOIN appointment_services aps ON aps.idappointment = a.idappointment
     JOIN service s ON s.idservice = aps.idservice
@@ -331,6 +409,7 @@ app.get('/api/reports/payments', async (req, res) => {
       return res.status(404).json({ message: 'No payment records found' });
     }
 
+    // Return all payment records with patient, dentist, services, total price, and payment status
     return res.status(200).json({ payments: result.rows });
   } catch (err) {
     console.error('Error fetching payment report:', err.message);
@@ -338,26 +417,28 @@ app.get('/api/reports/payments', async (req, res) => {
   }
 });
 
-
+// API endpoint to fetch all dental records along with appointment and service details
 app.get('/api/reports/records', async (req, res) => {
   const query = `
     SELECT 
       r.idrecord,
+      -- Determine patient name: use full name from users if patient exists, otherwise use appointment's patient_name
       CASE 
-        WHEN r.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
+        WHEN a.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
         ELSE a.patient_name
       END AS patient_name,
+      -- Dentist's full name
       CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-      a.date AS appointment_date,
-      STRING_AGG(s.name, ', ') AS services,
-      r.treatment_notes
+      a.date AS appointment_date,          -- Appointment date
+      STRING_AGG(s.name, ', ') AS services, -- List of services
+      r.treatment_notes                     -- Notes for this record
     FROM records r
-    LEFT JOIN users p ON p.idusers = r.idpatient
-    JOIN users d ON d.idusers = r.iddentist
     JOIN appointment a ON a.idappointment = r.idappointment
+    LEFT JOIN users p ON p.idusers = a.idpatient
+    JOIN users d ON d.idusers = r.iddentist
     JOIN appointment_services aps ON aps.idappointment = a.idappointment
     JOIN service s ON s.idservice = aps.idservice
-    WHERE a.status != 'cancelled'
+    WHERE a.status != 'cancelled'          -- Ignore cancelled appointments
     GROUP BY 
       r.idrecord, 
       p.firstname, 
@@ -368,9 +449,10 @@ app.get('/api/reports/records', async (req, res) => {
       a.date, 
       r.treatment_notes
     ORDER BY
+      -- Sort by patient name (case-insensitive) and then by appointment date
       LOWER(
         CASE 
-          WHEN r.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
+          WHEN a.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
           ELSE a.patient_name
         END
       ),
@@ -384,23 +466,30 @@ app.get('/api/reports/records', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
+    // Return all records in JSON format
     return res.status(200).json({ records: result.rows });
   } catch (err) {
     console.error('Error fetching record report:', err.message);
     return res.status(500).json({ message: 'Error fetching record report', error: err.message });
   }
 });
+
+// API endpoint to fetch today's appointments with patient and service details
 app.get('/api/reports/today-appointments', async (req, res) => {
   const query = `
     SELECT 
       a.idappointment,
+      -- Format time in Manila timezone (HH24:MI)
       to_char(a.date AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS time,
+      -- Use user's full name if exists, otherwise use appointment's patient_name
       COALESCE(u.firstname || ' ' || u.lastname, a.patient_name) AS patient_name,
+      -- Aggregate all services for the appointment
       STRING_AGG(s.name, ', ') AS services
     FROM appointment a
     LEFT JOIN users u ON u.idusers = a.idpatient
     LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
     LEFT JOIN service s ON s.idservice = aps.idservice
+    -- Only fetch appointments for today in Manila timezone
     WHERE DATE(a.date AT TIME ZONE 'Asia/Manila') = CURRENT_DATE
     GROUP BY a.idappointment, a.date, u.firstname, u.lastname, a.patient_name
     ORDER BY 
@@ -410,34 +499,41 @@ app.get('/api/reports/today-appointments', async (req, res) => {
 
   try {
     const result = await pool.query(query);
-    return res.status(200).json({ appointmentsToday: result.rows });
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found for today' });
+    }
+
+    // Return today's appointments in JSON
+    return res.status(200).json({ appointments: result.rows });
   } catch (err) {
-    console.error('Error fetching today appointments report:', err.message);
-    return res.status(500).json({ message: 'Error fetching today appointments', error: err.message });
+    console.error('Error fetching today\'s appointments:', err.message);
+    return res.status(500).json({ message: 'Error fetching today\'s appointments', error: err.message });
   }
 });
 
+// API endpoint to fetch 3D dental models along with patient, dentist, and appointment info
 app.get('/api/website/3dmodels', async (req, res) => {
   const query = `
     SELECT
-      r.idrecord,
-      rm.id AS model_id,
-      rm.before_model_url,
-      rm.after_model_url,
-      rm.before_uploaded_at,
-      rm.after_uploaded_at,
-      rm.created_at AS model_created_at,
-      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-      r.treatment_notes,
-      a.date AS appointment_date
+      r.idrecord,  -- Record ID
+      rm.id AS model_id,  -- Dental model ID
+      rm.before_model_url,  -- GLTF file path before treatment
+      rm.after_model_url,   -- GLTF file path after treatment
+      rm.before_uploaded_at,  -- Upload timestamp for before model
+      rm.after_uploaded_at,   -- Upload timestamp for after model
+      rm.created_at AS model_created_at,  -- Model record creation timestamp
+      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,  -- Patient full name
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,  -- Dentist full name
+      r.treatment_notes,  -- Notes about the treatment
+      a.date AS appointment_date  -- Appointment date
     FROM records r
-    JOIN users p ON r.idpatient = p.idusers
-    JOIN users d ON r.iddentist = d.idusers
-    JOIN appointment a ON r.idappointment = a.idappointment
-    LEFT JOIN dental_models rm ON rm.idrecord = r.idrecord
-    WHERE r.idpatient IS NOT NULL
-    ORDER BY a.date DESC, rm.created_at DESC NULLS LAST;
+    JOIN users p ON r.idpatient = p.idusers  -- Get patient info
+    JOIN users d ON r.iddentist = d.idusers  -- Get dentist info
+    JOIN appointment a ON r.idappointment = a.idappointment  -- Get appointment info
+    LEFT JOIN dental_models rm ON rm.idrecord = r.idrecord  -- Optional 3D model info
+    WHERE r.idpatient IS NOT NULL  -- Only include records linked to a patient
+    ORDER BY a.date DESC, rm.created_at DESC NULLS LAST;  -- Latest appointments and models first
   `;
 
   try {
@@ -447,141 +543,144 @@ app.get('/api/website/3dmodels', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
-    return res.status(200).json({ models: result.rows });
+    return res.status(200).json({ models: result.rows });  // Return fetched models
   } catch (err) {
     console.error('Error fetching 3D models:', err.message);
     return res.status(500).json({ message: 'Error fetching 3D models', error: err.message });
   }
 });
 
+// API endpoint to fetch top services based on usage, unique patients, and revenue
 app.get('/api/reports/top-services', async (req, res) => {
   const query = `
-   SELECT 
-  s.name AS service_name,
-  COALESCE(COUNT(aps.idappointment), 0) AS usage_count,
-  COALESCE(COUNT(DISTINCT a.idappointment), 0) AS unique_appointments,
-  COALESCE(COUNT(DISTINCT 
-    CASE 
-      WHEN a.idpatient IS NOT NULL THEN a.idpatient::text
-      ELSE a.patient_name
-    END
-  ), 0) AS unique_patients,
-  COALESCE(SUM(s.price), 0) AS total_revenue
-FROM service s
-LEFT JOIN appointment_services aps ON s.idservice = aps.idservice
-LEFT JOIN appointment a ON a.idappointment = aps.idappointment AND a.status = 'completed'
-
-LEFT JOIN records r ON r.idappointment = a.idappointment
-GROUP BY s.name
-ORDER BY usage_count DESC;
-
+    SELECT 
+      s.name AS service_name,  -- Service name
+      COALESCE(COUNT(aps.idappointment), 0) AS usage_count,  -- Total times the service was used
+      COALESCE(COUNT(DISTINCT a.idappointment), 0) AS unique_appointments,  -- Number of distinct appointments including this service
+      COALESCE(COUNT(DISTINCT 
+        CASE 
+          WHEN a.idpatient IS NOT NULL THEN a.idpatient::text  -- If patient exists, use patient ID
+          ELSE a.patient_name  -- Otherwise, use the name entered for walk-in/guest
+        END
+      ), 0) AS unique_patients,  -- Number of unique patients who received this service
+      COALESCE(SUM(s.price), 0) AS total_revenue  -- Total revenue generated from this service
+    FROM service s
+    LEFT JOIN appointment_services aps ON s.idservice = aps.idservice  -- Join to link service usage to appointments
+    LEFT JOIN appointment a ON a.idappointment = aps.idappointment AND a.status = 'completed'  -- Only consider completed appointments
+    LEFT JOIN records r ON r.idappointment = a.idappointment  -- Optional: join records for additional info
+    GROUP BY s.name
+    ORDER BY usage_count DESC;  -- Most used services appear first
   `;
 
   try {
     const result = await pool.query(query);
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No service usage data found' });
     }
 
-    return res.status(200).json({ topServices: result.rows });
+    return res.status(200).json({ topServices: result.rows });  // Return top services report
   } catch (err) {
     console.error('Error fetching top services report:', err.message);
     return res.status(500).json({ message: 'Error fetching top services report', error: err.message });
   }
 });
 
-
-app.post("/api/app/register", async (req, res) => {
-  const { username, email, password, usertype, firstname, lastname } = req.body;
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  if (!username || !email || !password || !usertype || !firstname || !lastname) {
-    return res.status(400).json({ message: "All fields are required" });
-  }
-
-  if (!emailRegex.test(email)) {
-    return res.status(400).json({ message: "Invalid email format" });
-  }
+// GET /api/website/appointments/report - Fetch all appointments with details
+app.get('/api/website/appointments/report', async (req, res) => {
+  // SQL query to fetch appointment details including patient, dentist, date, status, notes, and services
+  const query = `
+    SELECT 
+      a.idappointment,
+      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,  -- Patient full name
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,  -- Dentist full name
+      TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH12:MI AM') AS formatted_date,  -- Formatted date/time
+      a.status,  -- Appointment status
+      a.notes,   -- Any notes
+      STRING_AGG(s.name, ', ') AS services  -- List of services in this appointment
+    FROM appointment a
+    LEFT JOIN users p ON a.idpatient = p.idusers
+    LEFT JOIN users d ON a.iddentist = d.idusers
+    LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
+    LEFT JOIN service s ON aps.idservice = s.idservice
+    GROUP BY a.idappointment, patient_name, dentist_name, a.date, a.status, a.notes
+    ORDER BY a.idappointment;
+  `;
 
   try {
-    const existingEmail = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-    if (existingEmail.rows.length > 0) {
-      return res.status(400).json({ message: "Email already registered" });
+    // Execute the query
+    const result = await pool.query(query);
+
+    // If no appointments found, return 404
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
     }
 
-    const existingUsername = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
-    if (existingUsername.rows.length > 0) {
-      return res.status(400).json({ message: "Username already taken" });
-    }
-
-    const similarUsernameCheck = await pool.query("SELECT * FROM users WHERE username ILIKE $1", [username]);
-    if (similarUsernameCheck.rows.length > 0) {
-      return res.status(400).json({ message: "Username is too similar to an existing username" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const newUser = await pool.query(
-      `INSERT INTO users (username, email, password, usertype, firstname, lastname)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [username, email, hashedPassword, usertype, firstname, lastname]
-    );
-
-    return res.status(201).json({
-      message: "User registered successfully.",
-      user: newUser.rows[0],
+    // Return all appointments in JSON format
+    return res.status(200).json({
+      records: result.rows
     });
   } catch (err) {
-    console.error("Error in /register:", err.message);
-    return res.status(500).json({ message: "Internal server error", error: err.message });
+    // Handle database errors
+    console.error('Error fetching appointments:', err.message);
+    return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   }
 });
 
-
 // GET /api/fullreport
+// Fetch appointments with optional filters for status, dentist, and date
 app.get('/api/fullreport', async (req, res) => {
   const { status, dentist, date } = req.query;
 
+  // Base query to fetch appointment, patient, dentist, payment, and service details
   let query = `
     SELECT
       a.idappointment AS id,
-      CONCAT(p.firstname, ' ', p.lastname) AS patient,
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist,
-      a.status,
-      a.date,
-      r.paymentstatus,
-      r.total_paid,
-      s.name AS service,
-      s.price AS service_price
+      CONCAT(p.firstname, ' ', p.lastname) AS patient,  -- Patient full name
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist,  -- Dentist full name
+      a.status,                                        -- Appointment status
+      a.date,                                          -- Appointment date/time
+      r.paymentstatus,                                 -- Payment status
+      r.total_paid,                                    -- Total paid for this record
+      s.name AS service,                               -- Service name
+      s.price AS service_price                         -- Service price
     FROM appointment a
-    JOIN users p ON a.idpatient = p.idusers
-    JOIN users d ON a.iddentist = d.idusers
-    LEFT JOIN records r ON a.idappointment = r.idappointment
-    LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment
-    LEFT JOIN service s ON aps.idservice = s.idservice
+    JOIN users p ON a.idpatient = p.idusers           -- Link patient
+    JOIN users d ON a.iddentist = d.idusers          -- Link dentist
+    LEFT JOIN records r ON a.idappointment = r.idappointment  -- Optional payment record
+    LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment  -- Link services
+    LEFT JOIN service s ON aps.idservice = s.idservice           -- Service details
     WHERE 1=1
   `;
 
   const params = [];
 
+  // ✅ Optional filter by appointment status
   if (status) {
     query += ` AND a.status ILIKE $${params.length + 1}`;
     params.push(`%${status}%`);
   }
+
+  // ✅ Optional filter by dentist name
   if (dentist) {
     query += ` AND CONCAT(d.firstname, ' ', d.lastname) ILIKE $${params.length + 1}`;
     params.push(`%${dentist}%`);
   }
+
+  // ✅ Optional filter by appointment date
   if (date) {
     query += ` AND DATE(a.date) = $${params.length + 1}`;
     params.push(date);
   }
 
+  // ✅ Sort results by newest appointment first
   query += ` ORDER BY a.date DESC`;
 
   try {
+    // Execute query with parameters
     const result = await pool.query(query, params);
+
+    // Return all matched records
     return res.json(result.rows);
   } catch (err) {
     console.error('Error fetching report data:', err);
@@ -589,39 +688,102 @@ app.get('/api/fullreport', async (req, res) => {
   }
 });
 
+// API endpoint to register a new user
+app.post("/api/app/register", async (req, res) => {
+  const { username, email, password, usertype, firstname, lastname } = req.body;
 
-//  for logging in
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // ✅ Check required fields
+  if (!username || !email || !password || !usertype || !firstname || !lastname) {
+    return res.status(400).json({ message: "All fields are required" });
+  }
+
+  // ✅ Validate email format
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: "Invalid email format" });
+  }
+
+  try {
+    // ✅ Check if email already exists
+    const existingEmail = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+    if (existingEmail.rows.length > 0) {
+      return res.status(400).json({ message: "Email already registered" });
+    }
+
+    // ✅ Check if username already exists
+    const existingUsername = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
+    if (existingUsername.rows.length > 0) {
+      return res.status(400).json({ message: "Username already taken" });
+    }
+
+    // ✅ Hash the password for security
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // ✅ Insert new user into database
+    const newUser = await pool.query(
+      `INSERT INTO users (username, email, password, usertype, firstname, lastname)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [username, email, hashedPassword, usertype, firstname, lastname]
+    );
+
+    // ✅ Exclude password from response
+    const { password: _, ...userWithoutPassword } = newUser.rows[0];
+
+    // ✅ Send success response with user info (without password)
+    return res.status(201).json({
+      message: "User registered successfully.",
+      user: userWithoutPassword,
+    });
+  } catch (err) {
+    console.error("Error in /register:", err.message);
+    return res.status(500).json({ message: "Internal server error", error: err.message });
+  }
+});
+
+// POST /api/website/login - Admin login endpoint
 app.post('/api/website/login', [
+  // Validate input: username must be at least 3 chars, password at least 6 chars
   body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
 ], async (req, res) => {
+
+  // Check for validation errors
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   const { username, password } = req.body;
 
   try {
+    // Fetch user by username from the database
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+
+    // If user does not exist, return error
     if (result.rows.length === 0) {
       return res.status(400).json({ message: 'User not found.' });
     }
 
     const user = result.rows[0];
+
+    // Check if user is an admin
     if (user.usertype !== 'admin') {
       return res.status(403).json({ message: 'Access denied. Admins only.' });
     }
 
+    // Compare entered password with hashed password in database
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
+    // Generate JWT token valid for 24 hours
     const token = jwt.sign(
       { username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
+    // Return success response with token and basic user info
     return res.status(200).json({
       message: 'Admin login successful',
       token: token,
@@ -636,60 +798,32 @@ app.post('/api/website/login', [
   }
 });
 
+// GET /api/admin - Fetch all admin users
 app.get('/api/admin', async (req, res) => {
-  const query = "SELECT idUsers, email, username FROM users WHERE usertype = 'admin'";
+  // SQL query to get id, email, and username of users with 'admin' usertype
+  const query = "SELECT idusers, email, username FROM users WHERE usertype = 'admin'";
 
   try {
+    // Execute query
     const result = await pool.query(query);
 
+    // If no admins found, return 404
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No admin found' });
     }
 
+    // Return list of admins
     return res.status(200).json({
       admin: result.rows
     });
   } catch (err) {
+    // Handle database errors
     console.error('Error fetching admin:', err.message);
     return res.status(500).json({ message: 'Error fetching admin', error: err.message });
   }
 });
 
-app.get('/api/website/appointments/report', async (req, res) => {
-  const query = `
-    SELECT 
-      a.idappointment,
-      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-      TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH12:MI AM') AS formatted_date,
-      a.status,
-      a.notes,
-      STRING_AGG(s.name, ', ') AS services
-    FROM appointment a
-    LEFT JOIN users p ON a.idpatient = p.idusers
-    LEFT JOIN users d ON a.iddentist = d.idusers
-    LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
-    LEFT JOIN service s ON aps.idservice = s.idservice
-    GROUP BY a.idappointment, patient_name, dentist_name, a.date, a.status, a.notes
-    ORDER BY a.idappointment;
-  `;
-
-  try {
-    const result = await pool.query(query);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No appointments found' });
-    }
-
-    return res.status(200).json({
-      records: result.rows
-    });
-  } catch (err) {
-    console.error('Error fetching appointments:', err.message);
-    return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
-  }
-});
-
+// API endpoint to create a new appointment
 app.post('/api/app/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
 
@@ -704,7 +838,7 @@ app.post('/api/app/appointments', async (req, res) => {
     let insertQuery, insertValues;
 
     if (idpatient) {
-      // For registered users
+      // Appointment for registered patient
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes)
         VALUES ($1, $2, $3, $4, $5)
@@ -712,7 +846,7 @@ app.post('/api/app/appointments', async (req, res) => {
       `;
       insertValues = [idpatient, iddentist, date, status || 'pending', notes || ''];
     } else {
-      // For walk-ins
+      // Appointment for walk-in patient (patient not registered)
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes, patient_name)
         VALUES (NULL, $1, $2, $3, $4, $5)
@@ -721,10 +855,11 @@ app.post('/api/app/appointments', async (req, res) => {
       insertValues = [iddentist, date, status || 'pending', notes || '', patient_name];
     }
 
+    // Insert appointment into database
     const appointmentResult = await pool.query(insertQuery, insertValues);
     const appointment = appointmentResult.rows[0];
 
-    // Insert services
+    // Insert associated services for this appointment
     const serviceInsertPromises = idservice.map(serviceId => {
       const insertServiceQuery = `
         INSERT INTO appointment_services (idappointment, idservice)
@@ -736,6 +871,7 @@ app.post('/api/app/appointments', async (req, res) => {
 
     // Send notification to dentist only
     try {
+      // Convert date to Manila timezone for display
       const utcDate = new Date(appointment.date);
       const formatted = utcDate.toLocaleString('en-US', {
         timeZone: 'Asia/Manila',
@@ -747,6 +883,7 @@ app.post('/api/app/appointments', async (req, res) => {
         hour12: true,
       });
 
+      // Get dentist FCM token to send notification
       const { rows } = await pool.query(`SELECT fcm_token FROM users WHERE idusers = $1`, [iddentist]);
       const dentistToken = rows[0]?.fcm_token;
 
@@ -762,6 +899,7 @@ app.post('/api/app/appointments', async (req, res) => {
       console.error('❌ Failed to send notification to dentist:', notifErr.message);
     }
 
+    // Return success response with appointment details
     return res.status(201).json({
       message: 'Appointment created successfully',
       appointment,
@@ -773,14 +911,17 @@ app.post('/api/app/appointments', async (req, res) => {
   }
 });
 
+// API endpoint to fetch admin dashboard data
 app.get('/api/website/admindashboard', async (req, res) => {
   const query = `
     WITH 
+    -- Total appointments for today
     appointments_today AS (
       SELECT COUNT(*) AS total
       FROM appointment
       WHERE DATE(date AT TIME ZONE 'Asia/Manila') = CURRENT_DATE
     ),
+    -- Total earnings for this month
     this_month_earnings AS (
       SELECT 
         SUM(r.total_paid) AS total_earnings
@@ -789,6 +930,7 @@ app.get('/api/website/admindashboard', async (req, res) => {
       WHERE r.paymentstatus IN ('paid', 'partial')
         AND DATE_TRUNC('month', a.date AT TIME ZONE 'Asia/Manila') = DATE_TRUNC('month', CURRENT_DATE)
     ),
+    -- Top 3 most used services
     top_services AS (
       SELECT 
         s.name,
@@ -799,18 +941,20 @@ app.get('/api/website/admindashboard', async (req, res) => {
       ORDER BY usage_count DESC
       LIMIT 3
     ),
-  top_dentists AS (
-  SELECT 
-    a.iddentist,
-    CONCAT(u.firstname, ' ', u.lastname) AS fullname,
-    COUNT(*) AS patients_helped
-  FROM appointment a
-  JOIN users u ON u.idusers = a.iddentist
-  WHERE a.status = 'completed'
-  GROUP BY a.iddentist, fullname
-  ORDER BY patients_helped DESC
-  LIMIT 3
-),
+    -- Top 3 dentists based on completed appointments
+    top_dentists AS (
+      SELECT 
+        a.iddentist,
+        CONCAT(u.firstname, ' ', u.lastname) AS fullname,
+        COUNT(*) AS patients_helped
+      FROM appointment a
+      JOIN users u ON u.idusers = a.iddentist
+      WHERE a.status = 'completed'
+      GROUP BY a.iddentist, fullname
+      ORDER BY patients_helped DESC
+      LIMIT 3
+    ),
+    -- Monthly sales for the past 12 months
     monthly_sales AS (
       SELECT 
         TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM') AS month,
@@ -823,6 +967,7 @@ app.get('/api/website/admindashboard', async (req, res) => {
       LIMIT 12
     )
 
+    -- Combine all dashboard data into a single row
     SELECT 
       (SELECT total FROM appointments_today) AS totalAppointmentsToday,
       (SELECT total_earnings FROM this_month_earnings) AS thisMonthEarnings,
@@ -840,8 +985,9 @@ app.get('/api/website/admindashboard', async (req, res) => {
 
     const row = result.rows[0];
 
+    // Return structured dashboard data
     return res.status(200).json({
-      totalAppointmentsToday: row.totalappointmentstoday,
+      totalAppointmentsToday: row.totalappointmentstoday || 0,
       thisMonthEarnings: parseFloat(row.thismonthearnings) || 0,
       topServices: row.topservices || [],
       topDentists: row.topdentists || [],
@@ -853,10 +999,11 @@ app.get('/api/website/admindashboard', async (req, res) => {
   }
 });
 
-
+// API endpoint to create a new appointment
 app.post('/api/website/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
 
+  // Validate required fields
   if ((!idpatient && !patient_name) || !iddentist || !date || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
     return res.status(400).json({
       message: 'If idpatient is not provided, patient_name is required. Also, iddentist, date, and idservice array are required.'
@@ -867,6 +1014,7 @@ app.post('/api/website/appointments', async (req, res) => {
     let insertQuery, insertValues;
 
     if (idpatient) {
+      // For registered patients
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes)
         VALUES ($1, $2, $3, $4, $5)
@@ -874,6 +1022,7 @@ app.post('/api/website/appointments', async (req, res) => {
       `;
       insertValues = [idpatient, iddentist, date, status || 'pending', notes || ''];
     } else {
+      // For walk-in patients
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes, patient_name)
         VALUES (NULL, $1, $2, $3, $4, $5)
@@ -882,10 +1031,11 @@ app.post('/api/website/appointments', async (req, res) => {
       insertValues = [iddentist, date, status || 'pending', notes || '', patient_name];
     }
 
+    // Insert the appointment record
     const appointmentResult = await pool.query(insertQuery, insertValues);
     const appointment = appointmentResult.rows[0];
 
-    // Insert appointment_services
+    // Insert appointment services
     const serviceInsertPromises = idservice.map(serviceId => {
       const insertServiceQuery = `
         INSERT INTO appointment_services (idappointment, idservice)
@@ -895,10 +1045,9 @@ app.post('/api/website/appointments', async (req, res) => {
     });
     await Promise.all(serviceInsertPromises);
 
-    // 🛎 Send notifications
+    // 🛎 Send notifications to dentist (and patient if registered)
     const utcDate = new Date(appointment.date);
 
-    // Helper to get token and send
     const notify = async (id, role) => {
       const { rows } = await pool.query(`SELECT fcm_token FROM users WHERE idusers = $1`, [id]);
       const token = rows[0]?.fcm_token;
@@ -920,9 +1069,10 @@ app.post('/api/website/appointments', async (req, res) => {
       }
     };
 
-    if (idpatient) await notify(idpatient, 'patient');
-    await notify(iddentist, 'dentist');
+    if (idpatient) await notify(idpatient, 'patient'); // Notify patient if registered
+    await notify(iddentist, 'dentist'); // Always notify dentist
 
+    // Return created appointment data
     return res.status(201).json({
       message: 'Appointment created and notifications sent successfully',
       appointment,
@@ -934,24 +1084,24 @@ app.post('/api/website/appointments', async (req, res) => {
   }
 });
 
-
+// API endpoint to get patient reports
 app.get('/api/website/report/patients', async (req, res) => {
   try {
     const query = `
       SELECT  
-        p.idusers             AS patient_id,
+        p.idusers AS patient_id,
         CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
         p.birthdate,
         p.gender,
-        a.date                AS appointment_date,
-        STRING_AGG(DISTINCT s.name, ', ')    AS services,
+        a.date AS appointment_date,
+        STRING_AGG(DISTINCT s.name, ', ') AS services,  -- All services in that appointment
         r.treatment_notes,
         CONCAT(d.firstname, ' ', d.lastname) AS doctor_name,
-        SUM(s.price)         AS total_amount
+        SUM(s.price) AS total_amount
       FROM users p
       LEFT JOIN appointment a 
         ON a.idpatient = p.idusers
-        AND a.status = 'completed'        -- only “completed” appointments
+        AND a.status = 'completed'  -- only completed appointments
       LEFT JOIN users d 
         ON a.iddentist = d.idusers
       LEFT JOIN records r 
@@ -961,7 +1111,7 @@ app.get('/api/website/report/patients', async (req, res) => {
       LEFT JOIN service s 
         ON aps.idservice = s.idservice
       WHERE p.usertype = 'patient'
-        AND a.idappointment IS NOT NULL    -- exclude rows where no completed appointment exists
+        AND a.idappointment IS NOT NULL  -- exclude patients with no completed appointments
       GROUP BY 
         p.idusers, p.firstname, p.lastname, p.birthdate, p.gender,
         a.idappointment, a.date, d.firstname, d.lastname, r.treatment_notes
@@ -969,15 +1119,20 @@ app.get('/api/website/report/patients', async (req, res) => {
     `;
 
     const result = await pool.query(query);
-    return res.json(result.rows);
+
+    // Return patient report data
+    return res.status(200).json({
+      message: 'Patient report fetched successfully',
+      patients: result.rows
+    });
+
   } catch (err) {
-    console.error('Error fetching all patient data:', err);
-    return res.status(500).json({ message: 'Server error' });
+    console.error('Error fetching patient report:', err);
+    return res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-
-
+// Get all completed records for a specific patient
 app.get('/api/app/patientrecords/:id', async (req, res) => { 
   const patientId = req.params.id;
 
@@ -986,10 +1141,10 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
       r.idrecord,
       r.idappointment,
       r.iddentist,
-      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname,
-      a.date AS appointmentDate,
-      r.paymentstatus,
-      r.treatment_notes,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname,  -- Dentist's full name
+      a.date AS appointmentDate,  -- Appointment date
+      r.paymentstatus,            -- 'paid' or 'unpaid'
+      r.treatment_notes,          -- Treatment notes
       COALESCE(
         (
           SELECT STRING_AGG(s.name || ' ' || s.price,  ', ' )
@@ -997,7 +1152,7 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), ''
-      ) AS servicesWithPrices,
+      ) AS servicesWithPrices,    -- List of services with prices
       COALESCE(
         (
           SELECT SUM(s.price)
@@ -1005,8 +1160,8 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), 0
-      ) AS totalPrice,
-      COALESCE(r.total_paid, 0) AS totalPaid,
+      ) AS totalPrice,            -- Total price for appointment
+      COALESCE(r.total_paid, 0) AS totalPaid,  -- Amount paid
       (COALESCE(
         (
           SELECT SUM(s.price)
@@ -1014,12 +1169,12 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), 0
-      ) - COALESCE(r.total_paid, 0)) AS stillOwe
+      ) - COALESCE(r.total_paid, 0)) AS stillOwe    -- Remaining balance
     FROM records r
     LEFT JOIN users d ON r.iddentist = d.idusers
     LEFT JOIN appointment a ON r.idappointment = a.idappointment
     WHERE r.idpatient = $1
-      AND a.status = 'completed'      -- <---- ADD THIS LINE TO FILTER COMPLETED ONLY
+      AND a.status = 'completed'      -- Only completed appointments
     ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
@@ -1030,21 +1185,24 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
       return res.status(404).json({ message: 'No completed records found for this patient' });
     }
 
-    return res.status(200).json({ records: result.rows });
+    // Return detailed records
+    return res.status(200).json({
+      message: 'Patient completed records fetched successfully',
+      records: result.rows
+    });
   } catch (err) {
     console.error('Error fetching patient records:', err.message);
     return res.status(500).json({ message: 'Error fetching patient records', error: err.message });
   }
 });
 
-
 cron.schedule('*/5 * * * *', async () => {
   const client = await pool.connect();
 
   try {
-    await client.query('BEGIN');
+    await client.query('BEGIN'); // Start transaction
 
-    // 1. Get appointments to update
+    // 1. Get all appointments that are in the past and not yet completed or cancelled
     const res = await client.query(`
       SELECT idappointment, idpatient, iddentist
       FROM appointment
@@ -1055,23 +1213,24 @@ cron.schedule('*/5 * * * *', async () => {
     const appointmentsToComplete = res.rows;
 
     if (appointmentsToComplete.length === 0) {
-      console.log('No appointments to update.');
-      await client.query('COMMIT');
+      console.log('No appointments to update.'); // Nothing to process
+      await client.query('COMMIT'); // Commit empty transaction
       return;
     }
 
-    // 2. Update their statuses to 'completed'
+    // 2. Update these appointments to 'completed'
     const idsToUpdate = appointmentsToComplete.map(a => a.idappointment);
     await client.query(
       `UPDATE appointment SET status = 'completed' WHERE idappointment = ANY($1::int[])`,
       [idsToUpdate]
     );
+    console.log(`Updated ${idsToUpdate.length} appointments to completed.`);
 
-    // 3. Insert records if they don't already exist
+    // 3. Insert records for these appointments if they don't already exist
     for (const appt of appointmentsToComplete) {
       const { idappointment, idpatient, iddentist } = appt;
 
-      // Avoid inserting duplicate records
+      // Check if a record already exists
       const existing = await client.query(
         `SELECT 1 FROM records WHERE idappointment = $1 LIMIT 1`,
         [idappointment]
@@ -1084,20 +1243,20 @@ cron.schedule('*/5 * * * *', async () => {
           [idappointment, idpatient, iddentist]
         );
         console.log(`Inserted record for appointment ID ${idappointment}`);
+      } else {
+        console.log(`Record already exists for appointment ID ${idappointment}`);
       }
     }
 
-    await client.query('COMMIT');
-    console.log('Appointment statuses and records updated.');
+    await client.query('COMMIT'); // Commit all changes
+    console.log('Appointment statuses and records updated successfully.');
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK'); // Undo changes if error occurs
     console.error('Scheduled update failed:', err.message);
   } finally {
-    client.release();
+    client.release(); // Release DB connection
   }
 });
-
-
 
 app.get('/api/app/dentistrecords/:id', async (req, res) => { 
   const dentistId = req.params.id;
@@ -1108,39 +1267,39 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
       r.idappointment,
       r.idpatient,
       CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,  -- Patient's full name
-      a.patient_name AS patientName,  -- Fallback to patient_name from appointment (optional)
-      a.date AS appointmentDate,  -- Appointment date
-      r.paymentstatus,  -- Payment status
-      r.treatment_notes,  -- Treatment notes
+      a.patient_name AS patientName,                             -- Fallback for walk-in patients
+      a.date AS appointmentDate,                                 -- Appointment date
+      r.paymentstatus,                                           -- Payment status
+      r.treatment_notes,                                         -- Treatment notes
       COALESCE(
         (
-          SELECT STRING_AGG(s.name || ' ' || s.price, ', ')  -- Concatenate service name and price
+          SELECT STRING_AGG(s.name || ' ' || s.price, ', ')    -- List of services with prices
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), ''
-      ) AS servicesWithPrices,  -- List of services with their respective prices
+      ) AS servicesWithPrices,
       COALESCE(
         (
-          SELECT SUM(s.price)
+          SELECT SUM(s.price)                                   -- Total price of services
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), 0
-      ) AS totalPrice,  -- Total price of all services in this appointment
-      COALESCE(r.total_paid, 0) AS totalPaid,  -- Total amount paid by the patient
+      ) AS totalPrice,
+      COALESCE(r.total_paid, 0) AS totalPaid,                   -- Total paid by patient
       (COALESCE(
         (
-          SELECT SUM(s.price)
+          SELECT SUM(s.price)                                   -- Calculate remaining balance
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
         ), 0
-      ) - COALESCE(r.total_paid, 0)) AS stillOwe  -- Calculate the remaining balance
+      ) - COALESCE(r.total_paid, 0)) AS stillOwe
     FROM records r
-    LEFT JOIN users p ON r.idpatient = p.idusers  -- Join with patient table
-    LEFT JOIN appointment a ON r.idappointment = a.idappointment  -- Join with appointment table
-    WHERE r.iddentist = $1  -- Dentist ID (parameterized query)
+    LEFT JOIN users p ON r.idpatient = p.idusers                -- Join with patients table
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment -- Join with appointment table
+    WHERE r.iddentist = $1                                      -- Filter by dentist ID
     ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
@@ -1161,10 +1320,10 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
 app.post('/api/website/record', async (req, res) => {
   const { idpatient, patient_name, iddentist, date, services, treatment_notes } = req.body;
 
+  // Validate required fields
   if (!iddentist || !date || !Array.isArray(services) || services.length === 0) {
     return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
   }
-
   if (!idpatient && !patient_name) {
     return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
   }
@@ -1172,10 +1331,11 @@ app.post('/api/website/record', async (req, res) => {
   try {
     await pool.query('BEGIN');
 
-    // 1. Insert appointment with status = 'completed'
+    // 1️⃣ Insert appointment with status = 'completed'
     let insertAppointmentQuery, insertParams;
 
     if (idpatient) {
+      // For registered patients
       insertAppointmentQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name, status)
         VALUES ($1, $2, $3, $4, NULL, 'completed')
@@ -1183,6 +1343,7 @@ app.post('/api/website/record', async (req, res) => {
       `;
       insertParams = [idpatient, iddentist, date, ''];
     } else {
+      // For walk-in patients
       insertAppointmentQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name, status)
         VALUES (NULL, $1, $2, $3, $4, 'completed')
@@ -1194,7 +1355,7 @@ app.post('/api/website/record', async (req, res) => {
     const apptResult = await pool.query(insertAppointmentQuery, insertParams);
     const idappointment = apptResult.rows[0].idappointment;
 
-    // 2. Insert appointment services
+    // 2️⃣ Insert appointment services
     for (const idservice of services) {
       await pool.query(
         `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`,
@@ -1202,12 +1363,11 @@ app.post('/api/website/record', async (req, res) => {
       );
     }
 
-    // 3. Insert record (always, even if treatment_notes is empty)
+    // 3️⃣ Insert record (even if treatment_notes is empty)
     const apptDetails = await pool.query(
       `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
       [idappointment]
     );
-
     const { idpatient: patientIdFromAppt, iddentist: dentistIdFromAppt } = apptDetails.rows[0];
 
     await pool.query(
@@ -1217,24 +1377,33 @@ app.post('/api/website/record', async (req, res) => {
     );
 
     await pool.query('COMMIT');
-    return res.status(201).json({ message: 'Appointment and record created successfully.', idappointment });
+
+    return res.status(201).json({ 
+      message: 'Appointment and record created successfully.', 
+      idappointment 
+    });
 
   } catch (error) {
     await pool.query('ROLLBACK');
     console.error('Error creating appointment and record:', error.message);
-    return res.status(500).json({ message: 'Failed to create appointment and record.', error: error.message });
+    return res.status(500).json({ 
+      message: 'Failed to create appointment and record.', 
+      error: error.message 
+    });
   }
 });
-app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
-  const id = req.params.id;
-  const { status, notes, date } = req.body;
 
-  // Allowed statuses patient can set (adjust as needed)
+app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
+  const id = req.params.id;                 // Appointment ID
+  const { status, notes, date } = req.body; // Status, optional notes, optional new date
+
+  // ✅ Allowed statuses a patient can set
   const allowedStatuses = ['cancelled', 'rescheduled'];
   if (!status || !allowedStatuses.includes(status)) {
     return res.status(400).json({ message: 'Invalid or missing status' });
   }
 
+  // 🕒 Generate current timestamp for automatic notes if notes not provided
   const now = new Date();
   const formattedDate = now.toISOString().slice(0, 16).replace("T", " ");
   let finalNotes = notes;
@@ -1250,6 +1419,7 @@ app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
     }
   }
 
+  // 🔧 Build dynamic update query depending on which fields are provided
   const setValues = [];
   const queryParams = [];
   let query = 'UPDATE appointment SET ';
@@ -1276,14 +1446,16 @@ app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
   queryParams.push(id);
 
   try {
+    // 🛠 Execute update
     const result = await pool.query(query, queryParams);
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Appointment not found.' });
     }
 
     const updatedAppt = result.rows[0];
 
-    // Fetch dentist's FCM token to notify dentist
+    // 🛎 Notify dentist via FCM
     const dentistResult = await pool.query(
       'SELECT fcm_token FROM users WHERE idusers = $1',
       [updatedAppt.iddentist]
@@ -1322,11 +1494,11 @@ app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
     } else {
       console.warn(`⚠️ No FCM token found for dentist ${updatedAppt.iddentist}`);
     }
- 
-     return res.json({
-       message: 'Appointment updated successfully',
-       appointment: updatedAppt,
-     });
+
+    return res.json({
+      message: 'Appointment updated successfully',
+      appointment: updatedAppt,
+    });
 
   } catch (err) {
     console.error('❌ Error updating appointment:', err.message);
@@ -1338,14 +1510,16 @@ app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
 });
 
 app.put('/api/app/appointmentstatus/:id', async (req, res) => {
-  const id = req.params.id;
-  const { status, notes, date } = req.body;
+  const id = req.params.id;                 // Appointment ID
+  const { status, notes, date } = req.body; // Status, optional notes, optional new date
 
+  // ✅ Allowed statuses that a dentist can set
   const allowedStatuses = ['approved', 'cancelled', 'rescheduled'];
   if (!status || !allowedStatuses.includes(status)) {
     return res.status(400).json({ message: 'Invalid or missing status' });
   }
 
+  // 🕒 Generate current timestamp for automatic notes if notes not provided
   const now = new Date();
   const formattedDate = now.toISOString().slice(0, 16).replace("T", " ");
   let finalNotes = notes;
@@ -1364,6 +1538,7 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
     }
   }
 
+  // 🔧 Build dynamic update query depending on provided fields
   const setValues = [];
   const queryParams = [];
   let query = 'UPDATE appointment SET ';
@@ -1390,19 +1565,21 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
   queryParams.push(id);
 
   try {
+    // 🛠 Execute update
     const result = await pool.query(query, queryParams);
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Appointment not found.' });
     }
 
     const updatedAppt = result.rows[0];
 
-    // ✅ Send FCM notification if patient is logged in
-   const userResult = await pool.query(
-  'SELECT fcm_token FROM users WHERE idusers = $1',
-  [updatedAppt.idpatient]
-);
-const fcmToken = userResult.rows[0]?.fcm_token;
+    // 🛎 Notify patient via FCM if token exists
+    const userResult = await pool.query(
+      'SELECT fcm_token FROM users WHERE idusers = $1',
+      [updatedAppt.idpatient]
+    );
+    const fcmToken = userResult.rows[0]?.fcm_token;
 
     if (fcmToken) {
       const manilaDateStr = new Date(updatedAppt.date).toLocaleString('en-US', {
@@ -1455,19 +1632,18 @@ const fcmToken = userResult.rows[0]?.fcm_token;
   }
 });
 
-
 app.put('/api/website/record/:idappointment', async (req, res) => {
-  const { idappointment } = req.params;
-  const { iddentist, date, services, treatment_notes } = req.body;
+  const { idappointment } = req.params; // Appointment ID to update
+  const { iddentist, date, services, treatment_notes } = req.body; // Incoming data
 
   if (!iddentist || !date || !Array.isArray(services)) {
     return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
   }
 
   try {
-    await pool.query('BEGIN');
+    await pool.query('BEGIN'); // Start transaction
 
-    // Update dentist and date
+    // 🔹 1. Update dentist and appointment date
     const updateAppointmentQuery = `
       UPDATE appointment
       SET iddentist = $1, date = $2
@@ -1481,15 +1657,15 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found.' });
     }
 
-    // Get current services for this appointment
+    // 🔹 2. Handle appointment services
     const currentServicesResult = await pool.query(
       `SELECT idservice FROM appointment_services WHERE idappointment = $1`,
       [idappointment]
     );
     const currentServiceIds = currentServicesResult.rows.map(row => row.idservice);
+    const newServiceIds = [...new Set(services)]; // Remove duplicates
 
-    const newServiceIds = [...new Set(services)];
-
+    // Services to add/remove
     const servicesToAdd = newServiceIds.filter(id => !currentServiceIds.includes(id));
     const servicesToRemove = currentServiceIds.filter(id => !newServiceIds.includes(id));
 
@@ -1509,7 +1685,7 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
       );
     }
 
-    // Update or insert treatment notes
+    // 🔹 3. Update or insert treatment notes in records
     if (treatment_notes !== undefined) {
       const recordCheck = await pool.query(
         `SELECT idrecord FROM records WHERE idappointment = $1`,
@@ -1517,11 +1693,13 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
       );
 
       if (recordCheck.rowCount > 0) {
+        // Update existing record
         await pool.query(
           `UPDATE records SET treatment_notes = $1 WHERE idappointment = $2`,
           [treatment_notes, idappointment]
         );
       } else {
+        // Insert new record if none exists
         const apptRes = await pool.query(
           `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
           [idappointment]
@@ -1540,24 +1718,23 @@ app.put('/api/website/record/:idappointment', async (req, res) => {
       }
     }
 
-    await pool.query('COMMIT');
+    await pool.query('COMMIT'); // Commit transaction
     return res.status(200).json({ message: 'Appointment updated successfully.' });
   } catch (err) {
-    await pool.query('ROLLBACK');
+    await pool.query('ROLLBACK'); // Rollback on error
     console.error('Error updating appointment:', err.message);
     return res.status(500).json({ message: 'Failed to update appointment', error: err.message });
   }
 });
 
 app.delete('/api/website/record/:id', async (req, res) => {
-  const id = req.params.id;
+  const id = req.params.id; // Appointment ID to delete
 
   try {
-    // Delete the appointment record from your tables
-    // Note: you might need to delete from related tables (like appointment_services or records) based on your DB schema
-    // Here, let's assume you want to delete from appointment table, which cascades to related tables or handle manually
+    // 🔹 Delete the appointment from the appointment table
+    // Note: If your DB has ON DELETE CASCADE, related rows in appointment_services and records will be removed automatically.
+    // Otherwise, you may need to delete manually from those tables first.
 
-    // For example, if you have FK with cascade delete, this will work:
     const deleteQuery = `DELETE FROM appointment WHERE idappointment = $1`;
     const result = await pool.query(deleteQuery, [id]);
 
@@ -1575,25 +1752,35 @@ app.delete('/api/website/record/:id', async (req, res) => {
 app.delete('/api/app/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
 
+  // ✅ Validate appointment ID
   if (isNaN(appointmentId)) {
     return res.status(400).json({ message: 'Invalid appointment ID' });
   }
 
   console.log('Deleting appointment with id:', appointmentId, 'type:', typeof appointmentId);
 
+  // 🔹 Delete appointment from database
+  // Note: If your DB has ON DELETE CASCADE, related rows in appointment_services or records will be deleted automatically
   const query = 'DELETE FROM appointment WHERE idappointment = $1';
 
   try {
     const result = await pool.query(query, [appointmentId]);
 
+    // ❌ No appointment found
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Appointment not found' });
     }
 
+    // ✅ Successfully deleted
     return res.status(200).json({ message: 'Appointment deleted successfully' });
   } catch (err) {
-    console.error('Error deleting, appointment in use:', err);
-    return res.status(500).json({ message: 'Error deleting, appointment in use', error: err.message });
+    console.error('Error deleting appointment, possibly in use:', err);
+
+    // 🛑 Catch foreign key constraints or other DB errors
+    return res.status(500).json({ 
+      message: 'Error deleting appointment, possibly in use', 
+      error: err.message 
+    });
   }
 });
 
@@ -1603,6 +1790,7 @@ WITH appointment_info AS (
   SELECT
     a.idappointment,
     a.date,
+    -- If patient exists, use full name; otherwise fallback to patient_name stored in appointment
     COALESCE(NULLIF(CONCAT(p.firstname, ' ', p.lastname), ' '), a.patient_name) AS patient_name,
     CONCAT(d.firstname, ' ', d.lastname) AS dentist_name
   FROM appointment a
@@ -1638,14 +1826,17 @@ ORDER BY ai.date ASC;
     }
 
     return res.status(200).json({
+      message: 'Records fetched successfully',
       records: result.rows
     });
   } catch (err) {
-    console.error('Error fetching records:', err.message);
-    return res.status(500).json({ message: 'Error fetching records', error: err.message });
+    console.error('❌ Error fetching records:', err.message);
+    return res.status(500).json({ 
+      message: 'Error fetching records', 
+      error: err.message 
+    });
   }
 });
-
 
 app.get('/api/website/payment', async (req, res) => {
   const client = await pool.connect();
@@ -1653,7 +1844,7 @@ app.get('/api/website/payment', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // STEP 1: Insert missing records for past appointments
+    // STEP 1: Insert missing records for past appointments (if any)
     const insertMissingRecordsQuery = `
       INSERT INTO records (idpatient, iddentist, idappointment)
       SELECT a.idpatient, a.iddentist, a.idappointment
@@ -1701,14 +1892,19 @@ app.get('/api/website/payment', async (req, res) => {
       return res.status(404).json({ message: 'No payment records found' });
     }
 
+    // ✅ Return results with a message for clarity
     return res.status(200).json({
+      message: 'Payment records fetched successfully',
       payments: result.rows
     });
 
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Error in payment API:', err.message);
-    return res.status(500).json({ message: 'Error fetching payments', error: err.message });
+    return res.status(500).json({
+      message: 'Error fetching payments',
+      error: err.message
+    });
   } finally {
     client.release();
   }
@@ -1718,6 +1914,7 @@ app.put('/api/website/payment/:id', async (req, res) => {
   const { id } = req.params;
   const { total_paid, total_price } = req.body;
 
+  // ✅ Validate inputs
   if (isNaN(total_paid) || total_paid < 0) {
     return res.status(400).json({ message: 'Invalid total_paid amount' });
   }
@@ -1726,7 +1923,7 @@ app.put('/api/website/payment/:id', async (req, res) => {
     return res.status(400).json({ message: 'Invalid total_price amount' });
   }
 
-  // ✅ Updated logic for payment status
+  // ✅ Determine payment status based on total_paid vs total_price
   let paymentstatus;
   if (parseFloat(total_paid) === 0) {
     paymentstatus = 'unpaid';
@@ -1739,6 +1936,7 @@ app.put('/api/website/payment/:id', async (req, res) => {
   const client = await pool.connect();
 
   try {
+    // STEP: Update the record with new payment details
     const updateQuery = `
       UPDATE records
       SET total_paid = $1,
@@ -1753,13 +1951,17 @@ app.put('/api/website/payment/:id', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found or not eligible for update' });
     }
 
+    // ✅ Return success message with updated record
     return res.status(200).json({
       message: 'Payment updated successfully',
       updatedRecord: result.rows[0],
     });
   } catch (err) {
     console.error('Error updating payment:', err.message);
-    return res.status(500).json({ message: 'Failed to update payment', error: err.message });
+    return res.status(500).json({
+      message: 'Failed to update payment',
+      error: err.message
+    });
   } finally {
     client.release();
   }
@@ -1769,6 +1971,7 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
 
   try {
+    // ✅ Fetch all services linked to the given appointment
     const result = await pool.query(
       `SELECT s.idservice, s.name, s.price
        FROM appointment_services aps
@@ -1778,17 +1981,16 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
     );
 
     const services = result.rows; // contains idservice, name, and price
+
+    // ✅ Return the list of services for the appointment
     return res.json({ services });
   } catch (error) {
     console.error('Error fetching services for appointment:', error.message);
-    return res.status(500).json({ error: 'Error fetching services for appointment' });
+    return res.status(500).json({ 
+      error: 'Error fetching services for appointment' 
+    });
   }
 });
-
-
-
-
-
 
 app.put('/api/app/users/:id', async (req, res) => {
   const userId = req.params.id;
@@ -1807,36 +2009,38 @@ app.put('/api/app/users/:id', async (req, res) => {
     medicalhistory
   } = req.body;
 
+  // ✅ Validate required fields
   if (!username || !email || !firstname || !lastname || !usertype) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
+  // ✅ Validate usertype
   const validUsertypes = ['patient', 'dentist', 'admin'];
   if (!validUsertypes.includes(usertype.toLowerCase())) {
     return res.status(400).json({ message: 'Invalid usertype. Must be patient, dentist, or admin.' });
   }
 
   try {
-    // Check if user exists
+    // ✅ Check if user exists
     const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Check if username already exists for another user
+    // ✅ Check if username already exists for another user
     const usernameCheck = await pool.query(
-  'SELECT * FROM users WHERE username = $1 AND idusers != $2',
-  [username, userId]
-);
+      'SELECT * FROM users WHERE username = $1 AND idusers != $2',
+      [username, userId]
+    );
     if (usernameCheck.rows.length > 0) {
       return res.status(409).json({ message: 'Username already exists' });
     }
 
-  // Check if email already exists for another user
-const emailCheck = await pool.query(
-  'SELECT * FROM users WHERE email = $1 AND idusers != $2',
-  [email, userId]
-);
+    // ✅ Check if email already exists for another user
+    const emailCheck = await pool.query(
+      'SELECT * FROM users WHERE email = $1 AND idusers != $2',
+      [email, userId]
+    );
     if (emailCheck.rows.length > 0) {
       return res.status(409).json({ message: 'Email already exists' });
     }
@@ -1844,29 +2048,29 @@ const emailCheck = await pool.query(
     const existingUser = userResult.rows[0];
     let hashedPassword = existingUser.password;
 
-    // Only re-hash if password is changed
+    // ✅ Only hash new password if changed
     if (password && !(await bcrypt.compare(password, existingUser.password))) {
       hashedPassword = await bcrypt.hash(password, 10);
     }
 
-    // Update user record
-const updateQuery = `
-  UPDATE users
-  SET username = $1,
-      email = $2,
-      password = $3,
-      usertype = $4,
-      firstname = $5,
-      lastname = $6,
-      birthdate = $7,
-      contact = $8,
-      address = $9,
-      gender = $10,
-      allergies = $11,
-      medicalhistory = $12
-  WHERE idusers = $13
-  RETURNING *;
-`;
+    // ✅ Update user record in DB
+    const updateQuery = `
+      UPDATE users
+      SET username = $1,
+          email = $2,
+          password = $3,
+          usertype = $4,
+          firstname = $5,
+          lastname = $6,
+          birthdate = $7,
+          contact = $8,
+          address = $9,
+          gender = $10,
+          allergies = $11,
+          medicalhistory = $12
+      WHERE idusers = $13
+      RETURNING *;
+    `;
 
     const values = [
       username,
@@ -1886,6 +2090,7 @@ const updateQuery = `
 
     const result = await pool.query(updateQuery, values);
 
+    // ✅ Return updated user
     return res.status(200).json({
       message: 'User updated successfully',
       user: result.rows[0],
@@ -1898,40 +2103,39 @@ const updateQuery = `
 });
 
 app.get('/api/app/records', async (req, res) => {
- const query = `
-  SELECT 
-    p.idusers AS idpatient, -- ✅ Add patient ID here
-    r.idrecord,
-    CONCAT(p.firstname, ' ', p.lastname) AS patientFullname,
-    CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname,
-    r.treatment_notes,
-    r.paymentstatus,
-    r.idappointment,
-    a.date AS appointmentDate,
-    COALESCE(
-      (
-        SELECT STRING_AGG(s.name, ', ')
-        FROM appointment_services aps
-        JOIN service s ON aps.idservice = s.idservice
-        WHERE aps.idappointment = r.idappointment
-      ), ''
-    ) AS services,
-    COALESCE(
-      (
-        SELECT SUM(s.price)
-        FROM appointment_services aps
-        JOIN service s ON aps.idservice = s.idservice
-        WHERE aps.idappointment = r.idappointment
-      ), 0
-    ) AS totalPrice
-  FROM users p
-  LEFT JOIN records r ON r.idpatient = p.idusers
-  LEFT JOIN users d ON r.iddentist = d.idusers
-  LEFT JOIN appointment a ON r.idappointment = a.idappointment
-  WHERE p.usertype = 'patient'
-  ORDER BY r.idrecord DESC NULLS LAST;
-`;
-
+  const query = `
+    SELECT 
+      p.idusers AS idpatient, -- ✅ Patient ID
+      r.idrecord,             -- ✅ Record ID
+      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname, -- ✅ Full name of patient
+      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname, -- ✅ Full name of dentist
+      r.treatment_notes,      -- ✅ Notes about the treatment
+      r.paymentstatus,        -- ✅ Payment status (unpaid, partial, paid)
+      r.idappointment,        -- ✅ Associated appointment ID
+      a.date AS appointmentDate, -- ✅ Appointment date
+      COALESCE(
+        (
+          SELECT STRING_AGG(s.name, ', ') -- ✅ List of services for this appointment
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), ''
+      ) AS services,
+      COALESCE(
+        (
+          SELECT SUM(s.price) -- ✅ Total price of services for this appointment
+          FROM appointment_services aps
+          JOIN service s ON aps.idservice = s.idservice
+          WHERE aps.idappointment = r.idappointment
+        ), 0
+      ) AS totalPrice
+    FROM users p
+    LEFT JOIN records r ON r.idpatient = p.idusers    -- ✅ Join patient records
+    LEFT JOIN users d ON r.iddentist = d.idusers      -- ✅ Join dentist info
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment -- ✅ Join appointment details
+    WHERE p.usertype = 'patient'                      -- ✅ Only fetch patient records
+    ORDER BY r.idrecord DESC NULLS LAST;             -- ✅ Latest records first
+  `;
 
   try {
     const result = await pool.query(query);
@@ -1940,13 +2144,13 @@ app.get('/api/app/records', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
+    // ✅ Return all records in response
     return res.status(200).json({ records: result.rows });
   } catch (err) {
     console.error('Error fetching records:', err.message);
     return res.status(500).json({ message: 'Error fetching records', error: err.message });
   }
 });
-
  
 app.post('/api/app/users', async (req, res) => {
   const {
@@ -1964,13 +2168,13 @@ app.post('/api/app/users', async (req, res) => {
     medicalhistory
   } = req.body;
 
-  // Basic validation
+  // ✅ Basic validation: ensure required fields are provided
   if (!username || !email || !password || !usertype || !firstname || !lastname) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
   try {
-    // Check if username or email already exists
+    // ✅ Check if username or email already exists to avoid duplicates
     const userCheck = await pool.query(
       'SELECT * FROM users WHERE username = $1 OR email = $2',
       [username, email]
@@ -1980,10 +2184,10 @@ app.post('/api/app/users', async (req, res) => {
       return res.status(409).json({ message: 'Username or email already exists' });
     }
 
-    // ✅ Hash the password before saving
+    // ✅ Hash the password before saving for security
     const hashedPassword = await bcrypt.hash(password, 10); // 10 = salt rounds
 
-    // Insert new user with hashed password
+    // ✅ Insert new user into database
     const insertQuery = `
       INSERT INTO users (
         username, email, password, usertype, firstname, lastname,
@@ -1995,7 +2199,7 @@ app.post('/api/app/users', async (req, res) => {
     const values = [
       username,
       email,
-      hashedPassword, // ✅ Use hashed password here
+      hashedPassword, // ✅ Store hashed password
       usertype,
       firstname,
       lastname,
@@ -2009,11 +2213,13 @@ app.post('/api/app/users', async (req, res) => {
 
     const result = await pool.query(insertQuery, values);
 
+    // ✅ Return newly created user
     return res.status(201).json({
       message: 'User created successfully',
       user: result.rows[0],
     });
   } catch (error) {
+    // ✅ Handle duplicate entries (unique constraint violation)
     if (error.code === '23505') {
       return res.status(409).json({ message: 'Username or email already exists' });
     }
@@ -2022,71 +2228,83 @@ app.post('/api/app/users', async (req, res) => {
   }
 });
 
-
 app.get('/api/app/appointments/search', async (req, res) => { 
   const { dentist, patient, startDate, endDate } = req.query;
 
+  // ✅ Prepare dynamic conditions for filtering
   let conditions = [];
   let values = [];
 
+  // Filter by dentist ID if provided
   if (dentist) {
     conditions.push(`iddentist = $${values.length + 1}`);
     values.push(dentist);
   }
 
+  // Filter by patient ID if provided
   if (patient) {
     conditions.push(`idpatient = $${values.length + 1}`);
     values.push(patient);
   }
 
+  // Filter by date range if both start and end dates are provided
   if (startDate && endDate) {
     conditions.push(`DATE(date) BETWEEN $${values.length + 1} AND $${values.length + 2}`);
     values.push(startDate, endDate);
   }
 
+  // Build WHERE clause dynamically
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  // ✅ Final query with optional filters, sorted by date ascending
   const query = `SELECT * FROM appointment ${whereClause} ORDER BY date ASC`;
 
   try {
     const result = await pool.query(query, values);
+
+    // ✅ Return filtered appointments
     return res.status(200).json({ appointments: result.rows });
   } catch (err) {
+    console.error('Error fetching appointments:', err.message);
     return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   }
 });
 
-
 // ✅ Get all dentists (users with usertype = 'dentist')
 app.get('/api/app/dentists', async (req, res) => {
+  // Query to fetch users whose usertype is 'dentist'
   const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'dentist'";
 
   try {
     const result = await pool.query(query);
 
+    // Check if no dentists found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No dentists found' });
     }
 
+    // Return list of dentists
     return res.status(200).json({
       dentists: result.rows
     });
   } catch (err) {
+    // Log error and return 500 response
     console.error('Error fetching dentists:', err.message);
     return res.status(500).json({ message: 'Error fetching dentists', error: err.message });
   }
 });
 
-
-// Request password reset endpoint
+// ✅ Request password reset endpoint
 app.post('/api/request-reset-password', async (req, res) => {
   const { email } = req.body;
 
+  // Validate email
   if (!email) {
     return res.status(400).json({ message: 'Email is required' });
   }
 
   try {
-    // Step 1: Check if user exists and if reset token is already active
+    // Step 1: Check if user exists and get existing reset token info
     const checkQuery = 'SELECT reset_token, reset_token_expiry FROM users WHERE email = $1';
     const checkResult = await pool.query(checkQuery, [email]);
 
@@ -2104,13 +2322,15 @@ app.post('/api/request-reset-password', async (req, res) => {
       });
     }
 
-    // Step 3: Generate new token
+    // Step 3: Generate new reset token and set expiration (1 hour)
     const token = crypto.randomBytes(20).toString('hex');
     const expiration = new Date(Date.now() + 3600000); // 1 hour
 
+    // Update user with new token and expiry
     const updateQuery = 'UPDATE users SET reset_token = $1, reset_token_expiry = $2 WHERE email = $3';
     await pool.query(updateQuery, [token, expiration, email]);
 
+    // Step 4: Configure email transporter (Gmail)
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -2119,9 +2339,11 @@ app.post('/api/request-reset-password', async (req, res) => {
       },
     });
 
+    // Construct reset link for frontend
     const resetLink = `https://cheonsafhaye14.github.io/ToothPix-website/#/resetpassword?token=${token}`;
 
     try {
+      // Step 5: Send password reset email
       await transporter.sendMail({
         to: email,
         subject: 'Password Reset Request',
@@ -2139,15 +2361,17 @@ app.post('/api/request-reset-password', async (req, res) => {
   }
 });
 
-// Reset password endpoint
+// ✅ Reset password endpoint
 app.post('/api/reset-password', async (req, res) => {
   const { token, newPassword } = req.body;
 
+  // Validate input
   if (!token || !newPassword) {
     return res.status(400).json({ message: 'Token and new password are required' });
   }
 
   try {
+    // Step 1: Check if token is valid and not expired
     const userQuery = 'SELECT * FROM users WHERE reset_token = $1 AND reset_token_expiry > NOW()';
     const userResult = await pool.query(userQuery, [token]);
 
@@ -2155,10 +2379,12 @@ app.post('/api/reset-password', async (req, res) => {
       return res.status(400).json({ message: 'Invalid or expired reset token. Please request a new one.' });
     }
 
-    const user = userResult.rows[0]; // get user info including usertype
+    const user = userResult.rows[0]; // Get user info including usertype
 
+    // Step 2: Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
+    // Step 3: Update user password and clear reset token
     const updateQuery = `
       UPDATE users
       SET password = $1, reset_token = NULL, reset_token_expiry = NULL
@@ -2166,7 +2392,7 @@ app.post('/api/reset-password', async (req, res) => {
     `;
     await pool.query(updateQuery, [hashedPassword, token]);
 
-    // Return success message + usertype
+    // Step 4: Return success message with usertype
     return res.status(200).json({ 
       message: 'Password has been successfully reset. You can now log in with your new password.', 
       usertype: user.usertype 
@@ -2177,17 +2403,17 @@ app.post('/api/reset-password', async (req, res) => {
   }
 });
 
-
-
+// ✅ Create a new dental record for an appointment
 app.post('/api/app/records', async (req, res) => {
   const { idpatient, iddentist, idappointment, treatment_notes, paymentstatus } = req.body;
 
+  // Step 1: Validate required fields
   if (!idpatient || !iddentist || !idappointment) {
     return res.status(400).json({ message: 'idpatient, iddentist, and idappointment are required.' });
   }
 
   try {
-    // Check if a record already exists for this idappointment
+    // Step 2: Check if a record already exists for this appointment
     const existing = await pool.query(
       'SELECT 1 FROM records WHERE idappointment = $1',
       [idappointment]
@@ -2197,7 +2423,7 @@ app.post('/api/app/records', async (req, res) => {
       return res.status(400).json({ message: 'A record for this appointment already exists.' });
     }
 
-    // Insert new record
+    // Step 3: Insert new record
     const query = `
       INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, paymentstatus)
       VALUES ($1, $2, $3, $4, $5)
@@ -2207,6 +2433,7 @@ app.post('/api/app/records', async (req, res) => {
     const result = await pool.query(query, [idpatient, iddentist, idappointment, treatment_notes, paymentstatus]);
     const record = result.rows[0];
 
+    // Step 4: Return success response with created record
     return res.status(201).json({
       message: 'Record created successfully',
       record,
@@ -2217,41 +2444,20 @@ app.post('/api/app/records', async (req, res) => {
   }
 });
 
-
-// Get all records
-// app.get('/api/app/records', async (req, res) => {
-//   const query = 'SELECT * FROM records';
-
-//   try {
-//     const result = await pool.query(query);
-
-//     if (result.rows.length === 0) {
-//       return res.status(404).json({ message: 'No records found' });
-//     }
-
-//     res.status(200).json({
-//       records: result.rows
-//     });
-//   } catch (err) {
-//     console.error('Error fetching records:', err.message);
-//     res.status(500).json({ message: 'Error fetching records', error: err.message });
-//   }
-// });
-
-
-
-// Get all users
+// ✅ Get all users from the database
 app.get('/api/app/users', async (req, res) => {
   const query = 'SELECT * FROM users';
 
   try {
+    // Step 1: Execute query to fetch all users
     const result = await pool.query(query);
 
+    // Step 2: Check if no users found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No users found' });
     }
 
-    // Transform birthdate for each row
+    // Step 3: Format birthdate to YYYY-MM-DD for each user
     const formattedRows = result.rows.map(user => ({
       ...user,
       birthdate: user.birthdate
@@ -2259,6 +2465,7 @@ app.get('/api/app/users', async (req, res) => {
         : null
     }));
 
+    // Step 4: Return users with formatted birthdates
     return res.status(200).json({
       records: formattedRows
     });
@@ -2268,54 +2475,18 @@ app.get('/api/app/users', async (req, res) => {
   }
 });
 
-
-
-// // Update a record
-// app.put('/api/app/records/:id', async (req, res) => {
-//   const id = req.params.id;
-//   const { treatment_notes, paymentstatus } = req.body;
-
-//   // Validate input
-//   const allowedStatuses = ['paid', 'unpaid', 'partial'];
-//   if (paymentstatus && !allowedStatuses.includes(paymentstatus)) {
-//     return res.status(400).json({ message: 'Invalid payment status' });
-//   }
-
-//   const query = `
-//     UPDATE records 
-//     SET treatment_notes = $1, paymentstatus = $2
-//     WHERE idrecord = $3
-//     RETURNING idrecord, idpatient, iddentist, idappointment, treatment_notes, paymentstatus
-//   `;
-
-//   try {
-//     const result = await pool.query(query, [treatment_notes, paymentstatus, id]);
-
-//     if (result.rows.length === 0) {
-//       return res.status(404).json({ message: 'Record not found' });
-//     }
-
-//     const updatedRecord = result.rows[0];
-
-//     res.status(200).json({
-//       message: 'Record updated successfully',
-//       record: updatedRecord,
-//     });
-//   } catch (err) {
-//     console.error('Error updating record:', err.message);
-//     res.status(500).json({ message: 'Error updating record', error: err.message });
-//   }
-// });
-
+// ✅ Update a specific record by idrecord
 app.put('/api/app/records/:idrecord', async (req, res) => {
   const { idrecord } = req.params;
   const { treatment_notes, paymentstatus } = req.body;
 
+  // Step 1: Validate input
   if (!idrecord) {
     return res.status(400).json({ message: 'idrecord is required.' });
   }
 
   try {
+    // Step 2: Update the record in the database
     const result = await pool.query(
       `UPDATE records
        SET treatment_notes = $1,
@@ -2325,10 +2496,12 @@ app.put('/api/app/records/:idrecord', async (req, res) => {
       [treatment_notes, paymentstatus, idrecord]
     );
 
+    // Step 3: Check if the record exists
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Record not found.' });
     }
 
+    // Step 4: Return the updated record
     return res.json({
       message: 'Record updated successfully',
       record: result.rows[0],
@@ -2339,123 +2512,45 @@ app.put('/api/app/records/:idrecord', async (req, res) => {
   }
 });
 
-
-// Delete a record
+// ✅ Delete a specific record by idrecord
 app.delete('/api/app/records/:id', async (req, res) => {
-  const recordId = req.params.id;
-  const query = 'DELETE FROM records WHERE idrecord = $1';
+  const recordId = req.params.id; // Get record ID from URL
+  const query = 'DELETE FROM records WHERE idrecord = $1'; // SQL query to delete record
 
   try {
+    // Execute the delete query
     const result = await pool.query(query, [recordId]);
 
+    // If no record was deleted, it means it was not found
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Record not found' });
     }
 
+    // Successfully deleted
     return res.status(200).json({ message: 'Record deleted successfully' });
   } catch (err) {
+    // Handle errors (e.g., record in use due to foreign key constraints)
     console.error('Error deleting, record in use:', err.message);
     return res.status(500).json({ message: 'Error deleting, record in use', error: err.message });
   }
 });
 
-//app
-// app.put('/api/app/appointments/:id', async (req, res) => {
-//   const id = req.params.id;
-//   const { status, notes, date } = req.body;
-
-//   // Supported statuses
-//   const allowedStatuses = ['approved', 'cancelled', 'rescheduled', 'declined'];
-
-//   // Validate status
-//   if (!status || !allowedStatuses.includes(status)) {
-//     return res.status(400).json({ message: 'Invalid or missing status' });
-//   }
-
-//   // Auto-generate notes if not provided
-//   const now = new Date();
-  
-//   // Format the date as "YYYY-MM-DD HH:mm"
-//   const formattedDate = now.toISOString().slice(0, 16).replace("T", " "); // e.g., "2025-05-04 21:42"
-
-//   let finalNotes = notes;
-
-//   if (!notes) {
-//     if (status === 'approved') {
-//       finalNotes = `Approved by dentist on ${formattedDate}`;
-//     } else if (status === 'declined' || status === 'cancelled') {
-//       finalNotes = `Cancelled by dentist on ${formattedDate}. Please reschedule.`;
-//     } else if (status === 'rescheduled' && date) {
-//       finalNotes = `Rescheduled to ${date}`;
-//     }
-//   }
-
-//   // Initialize query components
-//   const setValues = [];
-//   const queryParams = [];
-//   let query = 'UPDATE appointment SET ';
-
-//   // Set fields to update
-//   if (status) {
-//     setValues.push(`status = $${setValues.length + 1}`);
-//     queryParams.push(status);
-//   }
-
-//   if (finalNotes !== undefined) {
-//     setValues.push(`notes = $${setValues.length + 1}`);
-//     queryParams.push(finalNotes);
-//   }
-
-//   if (date && !isNaN(Date.parse(date))) {
-//     setValues.push(`date = $${setValues.length + 1}`);
-//     queryParams.push(date);
-//   }
-
-//   if (setValues.length === 0) {
-//     return res.status(400).json({ message: 'No valid fields to update' });
-//   }
-
-//   // Build final SQL query
-//   query += setValues.join(', ');
-//   query += ` WHERE idappointment = $${setValues.length + 1} RETURNING *`;
-//   queryParams.push(id);
-
-//   try {
-//     const result = await pool.query(query, queryParams);
-
-//     if (result.rowCount === 0) {
-//       return res.status(404).json({ message: 'Appointment not found.' });
-//     }
-
-//     res.json({
-//       message: 'Appointment updated successfully',
-//       appointment: result.rows[0],
-//     });
-//   } catch (err) {
-//     console.error('Error updating appointment:', err.message);
-//     res.status(500).json({
-//       message: 'Error updating appointment',
-//       error: err.message,
-//     });
-//   }
-// });
-
+// ✅ Update a specific appointment
 app.put('/api/app/appointments/:id', async (req, res) => {
   const idappointment = req.params.id;
   const { idpatient, iddentist, date, status, notes, idservice, patient_name } = req.body;
 
-  // Validate iddentist and idservice array presence
+  // Validate required fields
   if (!iddentist || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
     return res.status(400).json({ message: 'iddentist and idservice array are required.' });
   }
 
-  // Validate either idpatient or patient_name is provided (at least one)
   if (!idpatient && !patient_name) {
     return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
   }
 
   try {
-    // 1. Fetch existing appointment date if `date` is not provided
+    // 1️⃣ Determine final date (use existing date if not provided)
     let finalDate = date;
     if (!date) {
       const existing = await pool.query('SELECT date FROM appointment WHERE idappointment = $1', [idappointment]);
@@ -2465,14 +2560,12 @@ app.put('/api/app/appointments/:id', async (req, res) => {
       finalDate = existing.rows[0].date;
     }
 
-    // 2. Update appointment
-
-    // Different queries depending on presence of idpatient or patient_name
+    // 2️⃣ Update appointment differently for registered vs walk-in patients
     let updateAppointmentQuery;
     let queryParams;
 
     if (idpatient) {
-      // Registered patient update (patient_name set to NULL)
+      // Registered patient: set patient_name to NULL
       updateAppointmentQuery = `
         UPDATE appointment
         SET idpatient = $1, iddentist = $2, date = $3, status = $4, notes = $5, patient_name = NULL
@@ -2481,7 +2574,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
       `;
       queryParams = [idpatient, iddentist, finalDate, status || 'pending', notes || '', idappointment];
     } else {
-      // Walk-in update (idpatient set to NULL)
+      // Walk-in: set idpatient to NULL
       updateAppointmentQuery = `
         UPDATE appointment
         SET idpatient = NULL, iddentist = $1, date = $2, status = $3, notes = $4, patient_name = $5
@@ -2499,7 +2592,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
 
     const updatedAppointment = result.rows[0];
 
-    // 3. Replace appointment services
+    // 3️⃣ Replace all services for the appointment
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
 
     const insertServicePromises = idservice.map(serviceId =>
@@ -2507,7 +2600,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
     );
     await Promise.all(insertServicePromises);
 
-    // 4. Respond with success
+    // 4️⃣ Respond with success
     return res.json({
       message: 'Appointment updated successfully',
       appointment: updatedAppointment,
@@ -2519,21 +2612,20 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   }
 });
 
-
-
-
-
 // ✅ Get all patients (users with usertype = 'patient')
 app.get('/api/app/patients', async (req, res) => {
+  // Query only users with usertype 'patient'
   const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'patient'";
 
   try {
     const result = await pool.query(query);
 
+    // Return 404 if no patients found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No patients found' });
     }
 
+    // Return list of patients
     return res.status(200).json({
       patients: result.rows
     });
@@ -2543,51 +2635,21 @@ app.get('/api/app/patients', async (req, res) => {
   }
 });
 
-// // ✅ Create a new appointment //app
-// app.post('/api/app/appointments', async (req, res) => {
-//   const { idpatient, iddentist, date, status, notes, idservice } = req.body;
-
-//   // Validate required fields
-//   if (!idpatient || !iddentist || !date || !idservice) {
-//     return res.status(400).json({ message: 'idpatient, iddentist, date, and idservice are required.' });
-//   }
-
-//   const query = `
-//     INSERT INTO appointment (idpatient, iddentist, date, status, notes, idservice)
-//     VALUES ($1, $2, $3, $4, $5, $6)
-//     RETURNING idappointment, idpatient, iddentist, date, status, notes, idservice
-//   `;
-
-//   try {
-//     const result = await pool.query(query, [idpatient, iddentist, date, status || 'pending', notes || '', idservice]);
-//     const appointment = result.rows[0];
-
-//     res.status(201).json({
-//       message: 'Appointment created successfully',
-//       appointment,
-//     });
-//   } catch (err) {
-//     console.error('Error creating appointment:', err.message);
-//     res.status(500).json({ message: 'Error creating appointment', error: err.message });
-//   }
-// });
-
 app.get('/api/app/appointments', async (req, res) => {
- 
-
-  // Modify the fetchQuery to include sorting by date and then by idappointment
-  const fetchQuery = 'SELECT * FROM appointment ORDER BY date ASC, idappointment ASC'; // First by date, then by idappointment
+  // Query to fetch all appointments, sorted by date (ascending) and then by idappointment
+  const fetchQuery = 'SELECT * FROM appointment ORDER BY date ASC, idappointment ASC';
 
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN'); // Start a transaction
 
-    // Fetch all appointments, sorted by date and idappointment
+    // Execute the query to fetch appointments
     const result = await client.query(fetchQuery);
 
     await client.query('COMMIT'); // Commit the transaction
 
+    // Return 404 if no appointments found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No appointments found' });
     }
@@ -2597,15 +2659,13 @@ app.get('/api/app/appointments', async (req, res) => {
       appointments: result.rows
     });
   } catch (err) {
-    await client.query('ROLLBACK'); // Rollback in case of error
+    await client.query('ROLLBACK'); // Rollback transaction in case of error
     console.error('Error fetching appointments:', err.message);
     return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   } finally {
     client.release(); // Release the client back to the pool
   }
 });
-
-
 
 // In-memory refresh token store (for demo; move to DB for production)
 let refreshTokensStore = [];
@@ -2621,39 +2681,46 @@ app.post('/api/app/login', [
   const { username, password, fcmToken } = req.body;
 
   try {
+    // Fetch user by username
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
     if (result.rows.length === 0) {
       return res.status(400).json({ message: 'User not found.' });
     }
 
     const user = result.rows[0];
-    const isMatch = await bcrypt.compare(password, user.password);
 
+    // Check password
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
-// Validate FCM token and update DB
-if (fcmToken) {
-  // Step 1: Remove the FCM token from other users who may have it
-  await pool.query('UPDATE users SET fcm_token = NULL WHERE fcm_token = $1 AND idusers != $2', [fcmToken, user.idusers]);
+    // Validate FCM token and update DB
+    if (fcmToken) {
+      // Remove the FCM token from other users who may have it
+      await pool.query(
+        'UPDATE users SET fcm_token = NULL WHERE fcm_token = $1 AND idusers != $2',
+        [fcmToken, user.idusers]
+      );
 
-  // Step 2: Store the token for the current user
-  await pool.query('UPDATE users SET fcm_token = $1 WHERE idusers = $2', [fcmToken, user.idusers]);
+      // Assign the token to the current user
+      await pool.query('UPDATE users SET fcm_token = $1 WHERE idusers = $2', [fcmToken, user.idusers]);
 
-  console.log(`✅ Updated FCM token for user ${user.idusers}, removed from others if duplicated.`);
-}
+      console.log(`✅ Updated FCM token for user ${user.idusers}, removed from others if duplicated.`);
+    }
 
-    // Generate tokens as before
+    // Generate JWT access token
     const accessToken = jwt.sign(
       { userId: user.idusers, username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: '24h' } // 1 day expiry
     );
 
+    // Generate a refresh token (stored in-memory for demo purposes)
     const refreshToken = crypto.randomBytes(64).toString('hex');
     refreshTokensStore.push({ token: refreshToken, userId: user.idusers });
 
+    // Respond with tokens and basic user info
     return res.status(200).json({
       message: 'Login successful',
       accessToken,
@@ -2666,45 +2733,62 @@ if (fcmToken) {
       },
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Error querying database' });
+    console.error('Error during login:', err.message);
+    return res.status(500).json({ message: 'Error querying database', error: err.message });
   }
 });
 
-
+// Exchange refresh token for a new access token
 app.post('/api/app/refresh-token', (req, res) => {
   const { refreshToken } = req.body;
 
-  if (!refreshToken) return res.status(401).json({ message: 'Refresh token required' });
+  // Validate presence of refresh token
+  if (!refreshToken) {
+    return res.status(401).json({ message: 'Refresh token required' });
+  }
 
+  // Find the refresh token in the in-memory store
   const storedToken = refreshTokensStore.find(rt => rt.token === refreshToken);
 
-  if (!storedToken) return res.status(403).json({ message: 'Invalid refresh token' });
+  if (!storedToken) {
+    return res.status(403).json({ message: 'Invalid refresh token' });
+  }
 
-  // Generate new access token for the user
-  const newAccessToken = jwt.sign(
-    { userId: storedToken.userId }, 
-    process.env.JWT_SECRET,
-    { expiresIn: '24h' }
-  );
+  try {
+    // Generate a new JWT access token
+    const newAccessToken = jwt.sign(
+      { userId: storedToken.userId }, 
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' } // valid for 24 hours
+    );
 
-  return res.status(200).json({ accessToken: newAccessToken });
+    return res.status(200).json({ accessToken: newAccessToken });
+  } catch (err) {
+    console.error('Error generating access token:', err.message);
+    return res.status(500).json({ message: 'Error generating new access token', error: err.message });
+  }
 });
 
+// Logout endpoint
 app.post('/api/app/logout', async (req, res) => {
   const { refreshToken } = req.body;
-  if (!refreshToken) return res.status(400).json({ message: 'Refresh token required' });
 
-  // Find userId before filtering out
+  if (!refreshToken) {
+    return res.status(400).json({ message: 'Refresh token required' });
+  }
+
+  // Find the token in the store
   const storedToken = refreshTokensStore.find(rt => rt.token === refreshToken);
+
   if (storedToken) {
     const userId = storedToken.userId;
 
-    // 🔁 Clear FCM token in memory
+    // Clear any in-memory FCM token (if using in-memory mapping)
     activeTokens.delete(userId);
     console.log(`🧹 Removed in-memory FCM token for user ${userId} on logout`);
 
     try {
-      // 🔁 Clear FCM token in the database
+      // Clear FCM token in the database
       await pool.query('UPDATE users SET fcm_token = NULL WHERE idusers = $1', [userId]);
       console.log(`🧹 Cleared FCM token in DB for user ${userId}`);
     } catch (err) {
@@ -2712,16 +2796,16 @@ app.post('/api/app/logout', async (req, res) => {
     }
   }
 
-  // Remove refresh token from store
+  // Remove the refresh token from the in-memory store
   refreshTokensStore = refreshTokensStore.filter(rt => rt.token !== refreshToken);
 
- return res.status(200).json({ message: 'Logged out successfully' });
+  return res.status(200).json({ message: 'Logged out successfully' });
 });
-
 
 // Get profile route
 app.get('/api/app/profile', authenticateToken, async (req, res) => {
   try {
+    // Fetch user based on authenticated userId
     const getQuery = 'SELECT * FROM users WHERE idusers = $1';
     const result = await pool.query(getQuery, [req.userId]);
 
@@ -2731,7 +2815,7 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
 
     const user = result.rows[0];
 
-    // Format birthdate
+    // Format birthdate to YYYY-MM-DD if available
     const formattedUser = {
       ...user,
       birthdate: user.birthdate
@@ -2739,7 +2823,7 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
         : null
     };
 
-    // Remove sensitive fields
+    // Remove sensitive fields before sending to client
     delete formattedUser.password;
     delete formattedUser.reset_token;
 
@@ -2753,65 +2837,79 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
   }
 });
 
-
 // Update profile route
 app.post('/api/app/profile', authenticateToken, async (req, res) => {
+  // Destructure user profile fields from request body
   const { firstname, lastname, birthdate, contact, address, gender, allergies, medicalhistory, email, username } = req.body;
 
   try {
+    // SQL query to update user information in the database
     const updateQuery = `UPDATE users 
                          SET firstname = $1, lastname = $2, birthdate = $3, contact = $4, address = $5, gender = $6, allergies = $7, medicalhistory = $8, email = $9, username = $10
                          WHERE idusers = $11
-                         RETURNING *`;
+                         RETURNING *`; // Return the updated user data
 
+    // Execute the query with the provided user data and authenticated user ID
     const updatedUser = await pool.query(updateQuery, [firstname, lastname, birthdate, contact, address, gender, allergies, medicalhistory, email, username, req.userId]);
 
+    // Send success response with updated profile
     return res.status(200).json({
       message: 'Profile updated successfully',
-      profile: updatedUser.rows[0]
+      profile: updatedUser.rows[0] // Return the first (and only) updated row
     });
   } catch (err) {
+    // Log and handle errors
     console.error("Error updating profile:", err.message);
     return res.status(500).json({ message: 'Error updating profile' });
   }
 });
 
+// Route to add a new service
 app.post('/api/app/services', async (req, res) => {
+  // Extract fields from request body
   const { name, description, price, category } = req.body;
 
+  // Validate 'name': must be a non-empty string
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
 
+  // Validate 'price': must be a number
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
+  // Validate 'category': must be a non-empty string
   if (!category || typeof category !== 'string' || category.trim().length === 0) {
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
   }
 
   try {
+    // SQL query to insert the new service into the database
     const insertQuery = `
       INSERT INTO service (name, description, price, category)
       VALUES ($1, $2, $3, $4)
       RETURNING idservice, name, description, price, category
     `;
+
+    // Execute the insert query with sanitized inputs
     const result = await pool.query(insertQuery, [
       name.trim(),
-      description || null,
-      parseFloat(price),
+      description || null,            // Set description to null if not provided
+      parseFloat(price),              // Ensure price is a float
       category.trim()
     ]);
 
-    const service = result.rows[0];
+    const service = result.rows[0];   // Get the inserted service
     console.log('✅ Service added:', service);
 
+    // Retrieve all FCM tokens from users (if any exist)
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
     const tokens = tokensResult.rows
       .map(row => row.fcm_token)
-      .filter(token => typeof token === 'string' && token.trim().length > 0);
+      .filter(token => typeof token === 'string' && token.trim().length > 0); // Filter out invalid tokens
 
+    // If no FCM tokens found, skip sending notifications
     if (tokens.length === 0) {
       console.log('⚠️ No users with FCM tokens.');
       return res.status(201).json({
@@ -2823,6 +2921,7 @@ app.post('/api/app/services', async (req, res) => {
       });
     }
 
+    // Notification payload content
     const notificationPayload = {
       notification: {
         title: '🦷 New Dental Service Available',
@@ -2834,28 +2933,31 @@ app.post('/api/app/services', async (req, res) => {
       },
       android: {
         notification: {
-          channelId: 'appointment_channel_id',
+          channelId: 'appointment_channel_id',  // Custom Android notification channel
           priority: 'high',
         },
       }
     };
 
-    const MAX_BATCH = 500;
-    let totalSuccess = 0;
+    const MAX_BATCH = 500;    // FCM max batch size
+    let totalSuccess = 0;     // Count of successful notifications
 
+    // Send notifications in batches of 500
     for (let i = 0; i < tokens.length; i += MAX_BATCH) {
-      const batch = tokens.slice(i, i + MAX_BATCH);
+      const batch = tokens.slice(i, i + MAX_BATCH); // Get current batch of tokens
 
       const multicastMessage = {
         tokens: batch,
         ...notificationPayload,
       };
 
+      // Send the notification batch via FCM
       const response = await admin.messaging().sendEachForMulticast(multicastMessage);
 
       totalSuccess += response.successCount;
       console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes.`);
 
+      // Log any failed notifications for debugging
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
           console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
@@ -2863,6 +2965,7 @@ app.post('/api/app/services', async (req, res) => {
       });
     }
 
+    // Respond with success and notification stats
     return res.status(201).json({
       message: 'Service added and notifications sent successfully',
       service,
@@ -2872,6 +2975,7 @@ app.post('/api/app/services', async (req, res) => {
     });
 
   } catch (err) {
+    // Handle and log unexpected errors
     console.error('❌ Error adding service or sending notifications:', err.stack);
     return res.status(500).json({
       message: 'Failed to add service or notify users',
@@ -2880,23 +2984,26 @@ app.post('/api/app/services', async (req, res) => {
   }
 });
 
-
-
 // Get all services route
 app.get('/api/app/services', async (req, res) => {
+  // SQL query to select all services from the 'service' table
   const query = 'SELECT * FROM service';
 
   try {
+    // Execute the query
     const result = await pool.query(query);
     
+    // Check if no services were found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No services found' });
     }
 
+    // Return the list of services
     return res.status(200).json({
       services: result.rows
     });
   } catch (err) {
+    // Handle and log any errors
     console.error('Error fetching services:', err.message);
     return res.status(500).json({ message: 'Error fetching services', error: err.message });
   }
@@ -2907,16 +3014,17 @@ app.put('/api/app/services/:id', async (req, res) => {
   const { id } = req.params;  // Service ID from URL parameter
   const { name, description, price } = req.body;  // Data from the request body
 
-  // Validate input
+  // Validate 'name': must be a non-empty string
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
 
+  // Validate 'price': must be a valid number
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
-  // Query to update the service in the database
+  // SQL query to update the service based on the provided ID
   const query = `
     UPDATE service 
     SET name = $1, description = $2, price = $3
@@ -2925,92 +3033,81 @@ app.put('/api/app/services/:id', async (req, res) => {
   `;
 
   try {
+    // Execute the update query
     const result = await pool.query(query, [name.trim(), description, parseFloat(price), id]);
 
+    // If no service was found with the given ID
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Service not found' });
     }
 
-    const updatedService = result.rows[0];
+    const updatedService = result.rows[0];  // Get the updated service
 
-    // Respond with the updated service data
+    // Respond with success and updated service data
     return res.status(200).json({
       message: 'Service updated successfully',
       service: updatedService,
     });
   } catch (err) {
+    // Handle any unexpected errors
     console.error('Error updating service:', err.message);
     return res.status(500).json({ message: 'Error updating service', error: err.message });
   }
 });
 
 // Delete Service
+// This endpoint deletes a specific service from the database using its ID.
+// If the service doesn't exist, it returns a 404 error.
+// If the service is linked to other records (in use), it returns an error message.
 app.delete('/api/app/services/:id', async (req, res) => {
-  const serviceId = req.params.id;
-  const query = 'DELETE FROM service WHERE idservice = $1';
+  const serviceId = req.params.id; // Get service ID from URL parameters
+  const query = 'DELETE FROM service WHERE idservice = $1'; // SQL query to delete the service
 
   try {
-    const result = await pool.query(query, [serviceId]);
+    const result = await pool.query(query, [serviceId]); // Execute query
 
     if (result.rowCount === 0) {
+      // If no rows were affected, service not found
       return res.status(404).json({ message: 'Service not found' });
     }
 
+    // If deletion successful
     return res.status(200).json({ message: 'Service deleted successfully' });
   } catch (err) {
+    // Catch errors (e.g., foreign key constraint)
     console.error('Error deleting, service in use:', err.message);
     return res.status(500).json({ message: 'Error deleting, service in use', error: err.message });
   }
 });
+
 // Delete User
+// This endpoint removes a user from the database based on their ID.
+// If the user does not exist, it responds with a 404 error message.
+// If the user cannot be deleted (e.g., linked to other data), it returns a 500 error.
 app.delete('/api/app/users/:id', async (req, res) => {
-  const userId = req.params.id;
-  const query = 'DELETE FROM users WHERE idusers = $1';
+  const userId = req.params.id; // Get user ID from URL parameters
+  const query = 'DELETE FROM users WHERE idusers = $1'; // SQL query to delete the user
 
   try {
-    const result = await pool.query(query, [userId]);
+    const result = await pool.query(query, [userId]); // Execute the delete query
 
     if (result.rowCount === 0) {
+      // No matching user found
       return res.status(404).json({ message: 'User not found' });
     }
 
+    // Successfully deleted the user
     return res.status(200).json({ message: 'User deleted successfully' });
   } catch (err) {
+    // Handle errors, such as when the user is referenced elsewhere
     console.error('Error deleting, user in use:', err.message);
     return res.status(500).json({ message: 'Error deleting, user in use', error: err.message });
   }
 });
 
-// Start server
+// Start Server
+// This starts the Express application and makes it listen on the specified PORT.
+// When the server is running, it logs a message showing the active port.
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
