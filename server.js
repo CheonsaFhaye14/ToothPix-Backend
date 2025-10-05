@@ -3105,6 +3105,25 @@ app.delete('/api/app/users/:id', async (req, res) => {
   }
 });
 
+const listEndpoints = require('express-list-endpoints'); // For listing all registered routes
+const fs = require('fs'); // For file handling
+const path = require('path'); // For working with file paths
+const morgan = require('morgan'); // For logging HTTP requests
+
+// Create a log file to store all route requests
+const accessLog = path.join(__dirname, 'access.log'); // Log file location
+const accessLogStream = fs.createWriteStream(accessLog, { flags: 'a' }); // 'a' means append mode
+
+// Log every request (method, route, and status) into access.log
+app.use(morgan('tiny', { stream: accessLogStream }));
+
+// Display all defined routes in the console when the server starts
+const endpoints = listEndpoints(app);
+console.log('All registered routes:');
+endpoints.forEach(e => {
+  console.log(`${e.methods.join(', ')} ${e.path}`); // Example: GET /api/app/users
+});
+
 // Start Server
 // This starts the Express application and makes it listen on the specified PORT.
 // When the server is running, it logs a message showing the active port.
