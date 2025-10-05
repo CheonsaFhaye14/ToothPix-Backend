@@ -3559,12 +3559,36 @@ cron.schedule('0 0 * * *', async () => {
   }
 });
 
+app.get('/api/website/activity_logs', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT al.*, u.username AS admin_username
+       FROM activity_logs al
+       LEFT JOIN users u ON al.admin_id = u.idusers
+       ORDER BY al.created_at DESC`
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No activity logs found' });
+    }
+
+    return res.status(200).json({
+      records: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching activity logs:', err.message);
+    return res.status(500).json({ message: 'Error fetching activity logs', error: err.message });
+  }
+});
+
+
 // Start Server
 // This starts the Express application and makes it listen on the specified PORT.
 // When the server is running, it logs a message showing the active port.
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
