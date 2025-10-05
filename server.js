@@ -3106,8 +3106,6 @@ app.delete('/api/app/users/:id', async (req, res) => {
 });
 
 const listEndpoints = require('express-list-endpoints'); // For listing all registered routes
-const fs = require('fs'); // For file handling
-const path = require('path'); // For working with file paths
 const morgan = require('morgan'); // For logging HTTP requests
 
 // Create a log file to store all route requests
