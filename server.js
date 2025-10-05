@@ -2154,8 +2154,7 @@ app.put('/api/app/users/:id', async (req, res) => {
 
 app.put('/api/website/users/:id', async (req, res) => {
   const userId = req.params.id;
-  const adminId = req.body.admin_id; // Consider getting from JWT token for security
-
+  const adminId = req.body.admin_id; // Best to get this from JWT in real apps
 
   const {
     username,
@@ -2172,12 +2171,10 @@ app.put('/api/website/users/:id', async (req, res) => {
     medicalhistory
   } = req.body;
 
-
   // Validate required fields
   if (!username || !email || !firstname || !lastname || !usertype) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
-
 
   // Validate usertype
   const validUsertypes = ['patient', 'dentist', 'admin'];
@@ -2185,44 +2182,37 @@ app.put('/api/website/users/:id', async (req, res) => {
     return res.status(400).json({ message: 'Invalid usertype. Must be patient, dentist, or admin.' });
   }
 
-
   try {
-    // Check if user exists
+    // Get existing user
     const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-
     const existingUser = userResult.rows[0];
 
-    // Check for duplicate username (ignore soft-deleted users)
-const usernameCheck = await pool.query(
-  'SELECT * FROM users WHERE username = $1 AND idusers != $2 AND is_deleted = FALSE',
-  [username, userId]
-);
-if (usernameCheck.rows.length > 0) {
-  return res.status(409).json({ message: 'Username already exists' });
-}
+    // Check for duplicate username (ignore deleted)
+    const usernameCheck = await pool.query(
+      'SELECT * FROM users WHERE username = $1 AND idusers != $2 AND is_deleted = FALSE',
+      [username, userId]
+    );
+    if (usernameCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Username already exists' });
+    }
 
-// Check for duplicate email (ignore soft-deleted users)
-const emailCheck = await pool.query(
-  'SELECT * FROM users WHERE email = $1 AND idusers != $2 AND is_deleted = FALSE',
-  [email, userId]
-);
-if (emailCheck.rows.length > 0) {
-  return res.status(409).json({ message: 'Email already exists' });
-}
-
+    // Check for duplicate email (ignore deleted)
+    const emailCheck = await pool.query(
+      'SELECT * FROM users WHERE email = $1 AND idusers != $2 AND is_deleted = FALSE',
+      [email, userId]
+    );
+    if (emailCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Email already exists' });
+    }
 
     let hashedPassword = existingUser.password;
-
-
-    // Only hash new password if changed
     if (password && !(await bcrypt.compare(password, existingUser.password))) {
       hashedPassword = await bcrypt.hash(password, 10);
     }
-
 
     // Prepare update query
     const updateQuery = `
@@ -2238,11 +2228,11 @@ if (emailCheck.rows.length > 0) {
           address = $9,
           gender = $10,
           allergies = $11,
-          medicalhistory = $12
+          medicalhistory = $12,
+          updated_at = NOW()
       WHERE idusers = $13
       RETURNING *;
     `;
-
 
     const values = [
       username,
@@ -2260,46 +2250,104 @@ if (emailCheck.rows.length > 0) {
       userId,
     ];
 
-
     const result = await pool.query(updateQuery, values);
     const updatedUser = result.rows[0];
 
-
-    // Detect and log which fields changed
-    const changes = [];
+    // Detect changes
+    const changes = {};
     const fields = ['username', 'email', 'usertype', 'firstname', 'lastname', 'birthdate', 'contact', 'address', 'gender', 'allergies', 'medicalhistory'];
-
 
     fields.forEach(field => {
       if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
-        // Replace arrow and remove non-ASCII characters
-        const oldValue = (existingUser[field] || 'null').replace(/[^\x20-\x7E]/g, '');
-        const newValue = (updatedUser[field] || 'null').replace(/[^\x20-\x7E]/g, '');
-        changes.push(`${field}: '${oldValue}' -> '${newValue}'`);
+        changes[field] = existingUser[field];
       }
     });
 
-
-    const description = changes.length > 0
-      ? `Updated user ${firstname} ${lastname} (${changes.join(', ')})`
+    // Prepare description
+    const description = Object.keys(changes).length > 0
+      ? `Updated user ${firstname} ${lastname} (${Object.keys(changes).join(', ')})`
       : `Updated user ${firstname} ${lastname} (no visible changes)`;
 
-
-    // Log the update activity (sanitized)
-    await logActivity(adminId, 'EDIT', 'users', userId, description);
-
+    // ✅ Log activity with undo data
+    await logActivity(adminId, 'EDIT', 'users', userId, description, {
+      table_name: 'users',
+      record_id: userId,
+      data: changes
+    });
 
     return res.status(200).json({
       message: 'User updated successfully',
       user: updatedUser,
     });
 
-
   } catch (error) {
     console.error('Error updating user:', error.message);
     return res.status(500).json({ message: 'Error updating user', error: error.message });
   }
 });
+
+app.post('/api/activity_logs/undo/:logId', async (req, res) => {
+  const logId = req.params.logId;
+  const adminId = req.body.admin_id; // or from JWT
+
+  try {
+    // Get activity log
+    const logResult = await pool.query('SELECT * FROM activity_logs WHERE id = $1', [logId]);
+    if (logResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Activity log not found' });
+    }
+
+    const log = logResult.rows[0];
+    const undoData = log.undo_data;
+
+    if (!undoData) {
+      return res.status(400).json({ message: 'No undo data available' });
+    }
+
+    const { table_name, record_id, data } = undoData;
+
+    if (log.action === 'EDIT') {
+      // Restore old values
+      const fields = Object.keys(data);
+      const values = Object.values(data);
+      const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+
+      const query = `
+        UPDATE ${table_name}
+        SET ${setClause}, updated_at = NOW()
+        WHERE idusers = $${fields.length + 1}
+      `;
+
+      await pool.query(query, [...values, record_id]);
+
+    } else if (log.action === 'DELETE') {
+      // Restore deleted record
+      const columns = Object.keys(data).join(', ');
+      const placeholders = Object.keys(data).map((_, idx) => `$${idx + 1}`).join(', ');
+
+      const query = `
+        INSERT INTO ${table_name} (${columns})
+        VALUES (${placeholders})
+      `;
+      await pool.query(query, Object.values(data));
+
+    } else if (log.action === 'ADD') {
+      // Undo add = delete
+      const query = `DELETE FROM ${table_name} WHERE idusers = $1`;
+      await pool.query(query, [record_id]);
+    }
+
+    // Log undo activity
+    await logActivity(adminId, 'UNDO', table_name, record_id, `Undid action: ${log.action}`, null);
+
+    return res.status(200).json({ message: 'Undo successful' });
+
+  } catch (error) {
+    console.error('Error performing undo:', error.message);
+    return res.status(500).json({ message: 'Error performing undo', error: error.message });
+  }
+});
+
 
 app.get('/api/app/records', async (req, res) => {
   const query = `
@@ -2451,11 +2499,10 @@ app.post('/api/website/users', async (req, res) => {
 
   try {
     // ✅ Check if username or email already exists
-   const userCheck = await pool.query(
-  'SELECT * FROM users WHERE (username = $1 OR email = $2) AND is_deleted = FALSE',
-  [username, email]
-);
-
+    const userCheck = await pool.query(
+      'SELECT * FROM users WHERE (username = $1 OR email = $2) AND is_deleted = FALSE',
+      [username, email]
+    );
 
     if (userCheck.rows.length > 0) {
       return res.status(409).json({ message: 'Username or email already exists' });
@@ -2490,16 +2537,20 @@ app.post('/api/website/users', async (req, res) => {
     const result = await pool.query(insertQuery, values);
     const newUser = result.rows[0];
 
-    // ✅ Log admin activity
+    // ✅ Log admin activity with undo_data
     await logActivity(
       adminId || null,
       'ADD',
       'users',
       newUser.idusers,
-      `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`
+      `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
+      {
+        table_name: 'users',
+        record_id: newUser.idusers,
+        data: null // ADD undo = DELETE so no need to store full data
+      }
     );
 
-    // ✅ Return success
     return res.status(201).json({
       message: 'User created successfully',
       user: newUser,
@@ -3399,11 +3450,23 @@ app.delete('/api/app/services/:id', async (req, res) => {
 // If the user cannot be deleted (e.g., linked to other data), it returns a 500 error.
 // 🗑️ Soft-delete a user and log the activity
 app.delete('/api/website/users/:id', async (req, res) => {
-  const userId = req.params.id; // Get user ID from URL parameters
-  const adminId = req.userId; // Assuming your auth middleware sets this
+  const userId = req.params.id; 
+  const adminId = req.userId; // From auth middleware
 
   try {
-    // Step 1: Soft delete the user
+    // Step 1: Get the existing user data before deleting (for undo)
+    const existingUserResult = await pool.query(
+      `SELECT * FROM users WHERE idusers = $1 AND is_deleted = FALSE`,
+      [userId]
+    );
+
+    if (existingUserResult.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found or already deleted' });
+    }
+
+    const existingUser = existingUserResult.rows[0];
+
+    // Step 2: Soft delete the user
     const result = await pool.query(
       `UPDATE users
        SET is_deleted = TRUE,
@@ -3413,20 +3476,22 @@ app.delete('/api/website/users/:id', async (req, res) => {
       [userId]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Step 2: Log activity
+    // Step 3: Log activity with undo data
     await pool.query(
-      `INSERT INTO activity_logs (admin_id, action, table_name, record_id, description)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO activity_logs (
+         admin_id, action, table_name, record_id, description, undo_data
+       ) VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         adminId,
         'DELETE',
         'users',
         userId,
-        `Soft-deleted user ${result.rows[0].username} (ID: ${userId})`
+        `Soft-deleted user ${existingUser.username} (ID: ${userId})`,
+        JSON.stringify({
+          table_name: "users",
+          record_id: userId,
+          data: existingUser // store full row so we can restore later
+        })
       ]
     );
 
@@ -3434,6 +3499,7 @@ app.delete('/api/website/users/:id', async (req, res) => {
       message: 'User soft-deleted successfully',
       user: result.rows[0]
     });
+
   } catch (err) {
     console.error('Error deleting user:', err.message);
     return res.status(500).json({ message: 'Error deleting user', error: err.message });
@@ -3458,13 +3524,40 @@ endpoints.forEach(e => {
   console.log(`${e.methods.join(', ')} ${e.path}`); // Example output: GET /api/app/users
 });
 
-async function logActivity(adminId, action, tableName, recordId, description) {
+async function logActivity(adminId, action, tableName, recordId, description, undoData = null) {
   await pool.query(
-    `INSERT INTO activity_logs (admin_id, action, table_name, record_id, description)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [adminId, action, tableName, recordId, description]
+    `INSERT INTO activity_logs (admin_id, action, table_name, record_id, description, undo_data)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      adminId,
+      action,
+      tableName,
+      recordId,
+      description,
+      undoData ? JSON.stringify(undoData) : null // store as JSON string
+    ]
   );
 }
+
+// Run every day at midnight
+cron.schedule('0 0 * * *', async () => {
+  console.log("Running soft-delete cleanup...");
+
+  const queries = [
+    `DELETE FROM users WHERE is_deleted = TRUE AND deleted_at < NOW() - INTERVAL '30 days'`,
+    `DELETE FROM service WHERE is_deleted = TRUE AND deleted_at < NOW() - INTERVAL '30 days'`,
+    `DELETE FROM appointment WHERE is_deleted = TRUE AND deleted_at < NOW() - INTERVAL '30 days'`,
+    `DELETE FROM records WHERE is_deleted = TRUE AND deleted_at < NOW() - INTERVAL '30 days'`
+  ];
+
+  for (const q of queries) {
+    try {
+      await pool.query(q);
+    } catch (err) {
+      console.error("Cleanup error:", err.message);
+    }
+  }
+});
 
 // Start Server
 // This starts the Express application and makes it listen on the specified PORT.
@@ -3472,6 +3565,7 @@ async function logActivity(adminId, action, tableName, recordId, description) {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
