@@ -2292,22 +2292,30 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
 
   try {
     // Get activity log
-    const logResult = await pool.query('SELECT * FROM activity_logs WHERE id = $1', [logId]);
+    const logResult = await pool.query(
+      'SELECT * FROM activity_logs WHERE id = $1',
+      [logId]
+    );
+
     if (logResult.rows.length === 0) {
       return res.status(404).json({ message: 'Activity log not found' });
     }
 
     const log = logResult.rows[0];
-    const undoData = log.undo_data;
 
+    // Prevent redoing undone logs
+    if (log.is_undone) {
+      return res.status(400).json({ message: 'This action has already been undone' });
+    }
+
+    const undoData = log.undo_data;
     if (!undoData) {
       return res.status(400).json({ message: 'No undo data available' });
     }
 
-    const { table_name, record_id, data } = undoData;
+    const { table_name, record_id, data, primary_key } = undoData;
 
     if (log.action === 'EDIT') {
-      // Restore old values
       const fields = Object.keys(data);
       const values = Object.values(data);
       const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
@@ -2315,13 +2323,11 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       const query = `
         UPDATE ${table_name}
         SET ${setClause}, updated_at = NOW()
-        WHERE idusers = $${fields.length + 1}
+        WHERE ${primary_key} = $${fields.length + 1}
       `;
-
       await pool.query(query, [...values, record_id]);
 
     } else if (log.action === 'DELETE') {
-      // Restore deleted record
       const columns = Object.keys(data).join(', ');
       const placeholders = Object.keys(data).map((_, idx) => `$${idx + 1}`).join(', ');
 
@@ -2332,13 +2338,30 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       await pool.query(query, Object.values(data));
 
     } else if (log.action === 'ADD') {
-      // Undo add = delete
-      const query = `DELETE FROM ${table_name} WHERE idusers = $1`;
+      const query = `
+        DELETE FROM ${table_name}
+        WHERE ${primary_key} = $1
+      `;
       await pool.query(query, [record_id]);
     }
 
+    // Mark log as undone
+    await pool.query(
+      `UPDATE activity_logs
+       SET is_undone = TRUE, undone_at = NOW()
+       WHERE id = $1`,
+      [logId]
+    );
+
     // Log undo activity
-    await logActivity(adminId, 'UNDO', table_name, record_id, `Undid action: ${log.action}`, null);
+    await logActivity(
+      adminId,
+      'UNDO',
+      table_name,
+      record_id,
+      `Undid activity log ID ${logId}`,
+      null
+    );
 
     return res.status(200).json({ message: 'Undo successful' });
 
@@ -2347,7 +2370,6 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     return res.status(500).json({ message: 'Error performing undo', error: error.message });
   }
 });
-
 
 app.get('/api/app/records', async (req, res) => {
   const query = `
@@ -3588,6 +3610,7 @@ app.get('/api/website/activity_logs', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
