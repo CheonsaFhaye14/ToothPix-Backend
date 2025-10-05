@@ -2154,7 +2154,8 @@ app.put('/api/app/users/:id', async (req, res) => {
 
 app.put('/api/website/users/:id', async (req, res) => {
   const userId = req.params.id;
-  const adminId = req.body.admin_id; // ✅ get admin ID from frontend
+  const adminId = req.body.admin_id; // Consider getting from JWT token for security
+
 
   const {
     username,
@@ -2171,27 +2172,32 @@ app.put('/api/website/users/:id', async (req, res) => {
     medicalhistory
   } = req.body;
 
-  // ✅ Validate required fields
+
+  // Validate required fields
   if (!username || !email || !firstname || !lastname || !usertype) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
-  // ✅ Validate usertype
+
+  // Validate usertype
   const validUsertypes = ['patient', 'dentist', 'admin'];
   if (!validUsertypes.includes(usertype.toLowerCase())) {
     return res.status(400).json({ message: 'Invalid usertype. Must be patient, dentist, or admin.' });
   }
 
+
   try {
-    // ✅ Check if user exists
+    // Check if user exists
     const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
+
     const existingUser = userResult.rows[0];
 
-    // ✅ Check for duplicate username
+
+    // Check for duplicate username
     const usernameCheck = await pool.query(
       'SELECT * FROM users WHERE username = $1 AND idusers != $2',
       [username, userId]
@@ -2200,7 +2206,8 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(409).json({ message: 'Username already exists' });
     }
 
-    // ✅ Check for duplicate email
+
+    // Check for duplicate email
     const emailCheck = await pool.query(
       'SELECT * FROM users WHERE email = $1 AND idusers != $2',
       [email, userId]
@@ -2209,14 +2216,17 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(409).json({ message: 'Email already exists' });
     }
 
+
     let hashedPassword = existingUser.password;
 
-    // ✅ Only hash new password if changed
+
+    // Only hash new password if changed
     if (password && !(await bcrypt.compare(password, existingUser.password))) {
       hashedPassword = await bcrypt.hash(password, 10);
     }
 
-    // ✅ Prepare update query
+
+    // Prepare update query
     const updateQuery = `
       UPDATE users
       SET username = $1,
@@ -2235,6 +2245,7 @@ app.put('/api/website/users/:id', async (req, res) => {
       RETURNING *;
     `;
 
+
     const values = [
       username,
       email,
@@ -2251,31 +2262,40 @@ app.put('/api/website/users/:id', async (req, res) => {
       userId,
     ];
 
+
     const result = await pool.query(updateQuery, values);
     const updatedUser = result.rows[0];
 
-    // 🧾 Detect and log which fields changed
+
+    // Detect and log which fields changed
     const changes = [];
     const fields = ['username', 'email', 'usertype', 'firstname', 'lastname', 'birthdate', 'contact', 'address', 'gender', 'allergies', 'medicalhistory'];
-    
+
+
     fields.forEach(field => {
       if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
-        changes.push(`${field}: '${existingUser[field] || 'null'}' → '${updatedUser[field] || 'null'}'`);
+        // Replace arrow and remove non-ASCII characters
+        const oldValue = (existingUser[field] || 'null').replace(/[^\x20-\x7E]/g, '');
+        const newValue = (updatedUser[field] || 'null').replace(/[^\x20-\x7E]/g, '');
+        changes.push(`${field}: '${oldValue}' -> '${newValue}'`);
       }
     });
+
 
     const description = changes.length > 0
       ? `Updated user ${firstname} ${lastname} (${changes.join(', ')})`
       : `Updated user ${firstname} ${lastname} (no visible changes)`;
 
-    // ✅ Log the update activity
+
+    // Log the update activity (sanitized)
     await logActivity(adminId, 'EDIT', 'users', userId, description);
 
-    // ✅ Return updated user
+
     return res.status(200).json({
       message: 'User updated successfully',
       user: updatedUser,
     });
+
 
   } catch (error) {
     console.error('Error updating user:', error.message);
