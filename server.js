@@ -2154,7 +2154,7 @@ app.put('/api/app/users/:id', async (req, res) => {
 
 app.put('/api/website/users/:id', async (req, res) => {
   const userId = req.params.id;
-  const adminId = req.body.admin_id; // Best to get this from JWT in real apps
+  const adminId = req.body.admin_id; // Ideally from JWT
 
   const {
     username,
@@ -2171,19 +2171,16 @@ app.put('/api/website/users/:id', async (req, res) => {
     medicalhistory
   } = req.body;
 
-  // Validate required fields
   if (!username || !email || !firstname || !lastname || !usertype) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
-  // Validate usertype
   const validUsertypes = ['patient', 'dentist', 'admin'];
   if (!validUsertypes.includes(usertype.toLowerCase())) {
-    return res.status(400).json({ message: 'Invalid usertype. Must be patient, dentist, or admin.' });
+    return res.status(400).json({ message: 'Invalid usertype' });
   }
 
   try {
-    // Get existing user
     const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
     if (userResult.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
@@ -2191,7 +2188,6 @@ app.put('/api/website/users/:id', async (req, res) => {
 
     const existingUser = userResult.rows[0];
 
-    // Check for duplicate username (ignore deleted)
     const usernameCheck = await pool.query(
       'SELECT * FROM users WHERE username = $1 AND idusers != $2 AND is_deleted = FALSE',
       [username, userId]
@@ -2200,7 +2196,6 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(409).json({ message: 'Username already exists' });
     }
 
-    // Check for duplicate email (ignore deleted)
     const emailCheck = await pool.query(
       'SELECT * FROM users WHERE email = $1 AND idusers != $2 AND is_deleted = FALSE',
       [email, userId]
@@ -2214,7 +2209,6 @@ app.put('/api/website/users/:id', async (req, res) => {
       hashedPassword = await bcrypt.hash(password, 10);
     }
 
-    // Prepare update query
     const updateQuery = `
       UPDATE users
       SET username = $1,
@@ -2253,27 +2247,23 @@ app.put('/api/website/users/:id', async (req, res) => {
     const result = await pool.query(updateQuery, values);
     const updatedUser = result.rows[0];
 
-    // Detect changes
+    // Detect changes for undo
     const changes = {};
-    const fields = ['username', 'email', 'usertype', 'firstname', 'lastname', 'birthdate', 'contact', 'address', 'gender', 'allergies', 'medicalhistory'];
+    const changedFields = [];
 
-    fields.forEach(field => {
+    ['username', 'email', 'usertype', 'firstname', 'lastname', 'birthdate', 'contact', 'address', 'gender', 'allergies', 'medicalhistory'].forEach(field => {
       if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
-        changes[field] = existingUser[field];
+        changes[field] = existingUser[field]; // old value for undo
+        changedFields.push(field); // for description
       }
     });
 
-    // Prepare description
-    const description = Object.keys(changes).length > 0
-      ? `Updated user ${firstname} ${lastname} (${Object.keys(changes).join(', ')})`
+    const description = changedFields.length > 0
+      ? `Updated user ${firstname} ${lastname} (${changedFields.join(', ')})`
       : `Updated user ${firstname} ${lastname} (no visible changes)`;
 
-    // ✅ Log activity with undo data
-    await logActivity(adminId, 'EDIT', 'users', userId, description, {
-      table_name: 'users',
-      record_id: userId,
-      data: changes
-    });
+    // ✅ Only save changed data in undo_data
+    await logActivity(adminId, 'EDIT', 'users', userId, description, changes);
 
     return res.status(200).json({
       message: 'User updated successfully',
@@ -2303,46 +2293,27 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
 
     const log = logResult.rows[0];
 
-    // Prevent redoing undone logs
     if (log.is_undone) {
       return res.status(400).json({ message: 'This action has already been undone' });
     }
 
     const undoData = log.undo_data;
-    if (!undoData) {
+    if (!undoData || Object.keys(undoData).length === 0) {
       return res.status(400).json({ message: 'No undo data available' });
     }
 
-    const { table_name, record_id, data, primary_key } = undoData;
-
     if (log.action === 'EDIT') {
-      const fields = Object.keys(data);
-      const values = Object.values(data);
+      // Restore old values
+      const fields = Object.keys(undoData);
+      const values = Object.values(undoData);
       const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
 
       const query = `
-        UPDATE ${table_name}
+        UPDATE ${log.table_name}
         SET ${setClause}, updated_at = NOW()
-        WHERE ${primary_key} = $${fields.length + 1}
+        WHERE idusers = $${fields.length + 1}
       `;
-      await pool.query(query, [...values, record_id]);
-
-    } else if (log.action === 'DELETE') {
-      const columns = Object.keys(data).join(', ');
-      const placeholders = Object.keys(data).map((_, idx) => `$${idx + 1}`).join(', ');
-
-      const query = `
-        INSERT INTO ${table_name} (${columns})
-        VALUES (${placeholders})
-      `;
-      await pool.query(query, Object.values(data));
-
-    } else if (log.action === 'ADD') {
-      const query = `
-        DELETE FROM ${table_name}
-        WHERE ${primary_key} = $1
-      `;
-      await pool.query(query, [record_id]);
+      await pool.query(query, [...values, log.record_id]);
     }
 
     // Mark log as undone
@@ -2357,8 +2328,8 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     await logActivity(
       adminId,
       'UNDO',
-      table_name,
-      record_id,
+      log.table_name,
+      log.record_id,
       `Undid activity log ID ${logId}`,
       null
     );
@@ -2514,13 +2485,13 @@ app.post('/api/website/users', async (req, res) => {
     adminId // ✅ include adminId from frontend
   } = req.body;
 
-  // ✅ Basic validation
+  // Basic validation
   if (!username || !email || !password || !usertype || !firstname || !lastname) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
   try {
-    // ✅ Check if username or email already exists
+    // Check if username or email already exists
     const userCheck = await pool.query(
       'SELECT * FROM users WHERE (username = $1 OR email = $2) AND is_deleted = FALSE',
       [username, email]
@@ -2530,10 +2501,10 @@ app.post('/api/website/users', async (req, res) => {
       return res.status(409).json({ message: 'Username or email already exists' });
     }
 
-    // ✅ Hash password
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // ✅ Insert new user
+    // Insert new user
     const insertQuery = `
       INSERT INTO users (
         username, email, password, usertype, firstname, lastname,
@@ -2559,18 +2530,14 @@ app.post('/api/website/users', async (req, res) => {
     const result = await pool.query(insertQuery, values);
     const newUser = result.rows[0];
 
-    // ✅ Log admin activity with undo_data
+    // Log admin activity (undo for ADD = DELETE, no undo_data needed)
     await logActivity(
       adminId || null,
       'ADD',
       'users',
       newUser.idusers,
       `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
-      {
-        table_name: 'users',
-        record_id: newUser.idusers,
-        data: null // ADD undo = DELETE so no need to store full data
-      }
+      null // ✅ no need for extra undo data
     );
 
     return res.status(201).json({
@@ -3476,7 +3443,7 @@ app.delete('/api/website/users/:id', async (req, res) => {
   const adminId = req.userId; // From auth middleware
 
   try {
-    // Step 1: Get the existing user data before deleting (for undo)
+    // Get existing user data before deleting
     const existingUserResult = await pool.query(
       `SELECT * FROM users WHERE idusers = $1 AND is_deleted = FALSE`,
       [userId]
@@ -3488,7 +3455,7 @@ app.delete('/api/website/users/:id', async (req, res) => {
 
     const existingUser = existingUserResult.rows[0];
 
-    // Step 2: Soft delete the user
+    // Soft delete the user
     const result = await pool.query(
       `UPDATE users
        SET is_deleted = TRUE,
@@ -3498,23 +3465,16 @@ app.delete('/api/website/users/:id', async (req, res) => {
       [userId]
     );
 
-    // Step 3: Log activity with undo data
-    await pool.query(
-      `INSERT INTO activity_logs (
-         admin_id, action, table_name, record_id, description, undo_data
-       ) VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        adminId,
-        'DELETE',
-        'users',
-        userId,
-        `Soft-deleted user ${existingUser.username} (ID: ${userId})`,
-        JSON.stringify({
-          table_name: "users",
-          record_id: userId,
-          data: existingUser // store full row so we can restore later
-        })
-      ]
+    // Log activity with undo data (only store data needed to restore)
+    await logActivity(
+      adminId,
+      'DELETE',
+      'users',
+      userId,
+      `Soft-deleted user ${existingUser.username} (ID: ${userId})`,
+      {
+        data: existingUser
+      }
     );
 
     return res.status(200).json({
@@ -3547,18 +3507,23 @@ endpoints.forEach(e => {
 });
 
 async function logActivity(adminId, action, tableName, recordId, description, undoData = null) {
-  await pool.query(
-    `INSERT INTO activity_logs (admin_id, action, table_name, record_id, description, undo_data)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      adminId,
-      action,
-      tableName,
-      recordId,
-      description,
-      undoData ? JSON.stringify(undoData) : null // store as JSON string
-    ]
-  );
+  try {
+    await pool.query(
+      `INSERT INTO activity_logs 
+       (admin_id, action, table_name, record_id, description, undo_data)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        adminId,
+        action,
+        tableName,
+        recordId,
+        description,
+        undoData ? JSON.stringify(undoData) : null
+      ]
+    );
+  } catch (err) {
+    console.error("Error logging activity:", err.message);
+  }
 }
 
 // Run every day at midnight
@@ -3610,6 +3575,7 @@ app.get('/api/website/activity_logs', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
