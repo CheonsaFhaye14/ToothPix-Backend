@@ -3105,21 +3105,22 @@ app.delete('/api/app/users/:id', async (req, res) => {
   }
 });
 
-const listEndpoints = require('express-list-endpoints'); // For listing all registered routes
-const morgan = require('morgan'); // For logging HTTP requests
+const listEndpoints = require('express-list-endpoints'); // Lists all routes in your app
+const morgan = require('morgan'); // Logs every HTTP request
 
-// Create a log file to store all route requests
-const accessLog = path.join(__dirname, 'access.log'); // Log file location
-const accessLogStream = fs.createWriteStream(accessLog, { flags: 'a' }); // 'a' means append mode
+// (Optional note: you can remove these two lines if you’re not using file logging anymore)
+// const accessLog = path.join(__dirname, 'access.log'); // Log file location
+// const accessLogStream = fs.createWriteStream(accessLog, { flags: 'a' }); // 'a' means append mode
 
-// Log every request (method, route, and status) into access.log
-app.use(morgan('tiny', { stream: accessLogStream }));
+// Logs every request (method + route + status) to the console
+// ✅ This works best for Render since logs show up in Render’s "Logs" tab
+app.use(morgan('tiny'));
 
-// Display all defined routes in the console when the server starts
+// Displays all defined routes when the app starts
 const endpoints = listEndpoints(app);
 console.log('All registered routes:');
 endpoints.forEach(e => {
-  console.log(`${e.methods.join(', ')} ${e.path}`); // Example: GET /api/app/users
+  console.log(`${e.methods.join(', ')} ${e.path}`); // Example output: GET /api/app/users
 });
 
 // Start Server
@@ -3128,3 +3129,4 @@ endpoints.forEach(e => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
