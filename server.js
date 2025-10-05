@@ -2762,20 +2762,17 @@ app.get('/api/app/users', async (req, res) => {
   }
 });
 
-// ✅ Get all users from the database
+// ✅ Get all users from the database (excluding soft-deleted ones)
 app.get('/api/website/users', async (req, res) => {
-  const query = 'SELECT * FROM users';
+  const query = 'SELECT * FROM users WHERE is_deleted = FALSE';
 
   try {
-    // Step 1: Execute query to fetch all users
     const result = await pool.query(query);
 
-    // Step 2: Check if no users found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No users found' });
     }
 
-    // Step 3: Format birthdate to YYYY-MM-DD for each user
     const formattedRows = result.rows.map(user => ({
       ...user,
       birthdate: user.birthdate
@@ -2783,7 +2780,6 @@ app.get('/api/website/users', async (req, res) => {
         : null
     }));
 
-    // Step 4: Return users with formatted birthdates
     return res.status(200).json({
       records: formattedRows
     });
@@ -3402,24 +3398,46 @@ app.delete('/api/app/services/:id', async (req, res) => {
 // This endpoint removes a user from the database based on their ID.
 // If the user does not exist, it responds with a 404 error message.
 // If the user cannot be deleted (e.g., linked to other data), it returns a 500 error.
+// 🗑️ Soft-delete a user and log the activity
 app.delete('/api/website/users/:id', async (req, res) => {
   const userId = req.params.id; // Get user ID from URL parameters
-  const query = 'DELETE FROM users WHERE idusers = $1'; // SQL query to delete the user
+  const adminId = req.userId; // Assuming your auth middleware sets this
 
   try {
-    const result = await pool.query(query, [userId]); // Execute the delete query
+    // Step 1: Soft delete the user
+    const result = await pool.query(
+      `UPDATE users
+       SET is_deleted = TRUE,
+           deleted_at = NOW()
+       WHERE idusers = $1
+       RETURNING *`,
+      [userId]
+    );
 
-    if (result.rowCount === 0) {
-      // No matching user found
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Successfully deleted the user
-    return res.status(200).json({ message: 'User deleted successfully' });
+    // Step 2: Log activity
+    await pool.query(
+      `INSERT INTO activity_logs (admin_id, action, table_name, record_id, description)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        adminId,
+        'DELETE',
+        'users',
+        userId,
+        `Soft-deleted user ${result.rows[0].username} (ID: ${userId})`
+      ]
+    );
+
+    return res.status(200).json({
+      message: 'User soft-deleted successfully',
+      user: result.rows[0]
+    });
   } catch (err) {
-    // Handle errors, such as when the user is referenced elsewhere
-    console.error('Error deleting, user in use:', err.message);
-    return res.status(500).json({ message: 'Error deleting, user in use', error: err.message });
+    console.error('Error deleting user:', err.message);
+    return res.status(500).json({ message: 'Error deleting user', error: err.message });
   }
 });
 
@@ -3455,6 +3473,7 @@ async function logActivity(adminId, action, tableName, recordId, description) {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
