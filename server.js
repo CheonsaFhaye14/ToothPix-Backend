@@ -2152,6 +2152,117 @@ app.put('/api/app/users/:id', async (req, res) => {
   }
 });
 
+app.put('/api/website/users/:id', async (req, res) => {
+  const userId = req.params.id;
+  const {
+    username,
+    email,
+    password,
+    usertype,
+    firstname,
+    lastname,
+    birthdate,
+    contact,
+    address,
+    gender,
+    allergies,
+    medicalhistory
+  } = req.body;
+
+  // ✅ Validate required fields
+  if (!username || !email || !firstname || !lastname || !usertype) {
+    return res.status(400).json({ message: 'Required fields missing' });
+  }
+
+  // ✅ Validate usertype
+  const validUsertypes = ['patient', 'dentist', 'admin'];
+  if (!validUsertypes.includes(usertype.toLowerCase())) {
+    return res.status(400).json({ message: 'Invalid usertype. Must be patient, dentist, or admin.' });
+  }
+
+  try {
+    // ✅ Check if user exists
+    const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // ✅ Check if username already exists for another user
+    const usernameCheck = await pool.query(
+      'SELECT * FROM users WHERE username = $1 AND idusers != $2',
+      [username, userId]
+    );
+    if (usernameCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Username already exists' });
+    }
+
+    // ✅ Check if email already exists for another user
+    const emailCheck = await pool.query(
+      'SELECT * FROM users WHERE email = $1 AND idusers != $2',
+      [email, userId]
+    );
+    if (emailCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Email already exists' });
+    }
+
+    const existingUser = userResult.rows[0];
+    let hashedPassword = existingUser.password;
+
+    // ✅ Only hash new password if changed
+    if (password && !(await bcrypt.compare(password, existingUser.password))) {
+      hashedPassword = await bcrypt.hash(password, 10);
+    }
+
+    // ✅ Update user record in DB
+    const updateQuery = `
+      UPDATE users
+      SET username = $1,
+          email = $2,
+          password = $3,
+          usertype = $4,
+          firstname = $5,
+          lastname = $6,
+          birthdate = $7,
+          contact = $8,
+          address = $9,
+          gender = $10,
+          allergies = $11,
+          medicalhistory = $12
+      WHERE idusers = $13
+      RETURNING *;
+    `;
+
+    const values = [
+      username,
+      email,
+      hashedPassword,
+      usertype.toLowerCase(),
+      firstname,
+      lastname,
+      birthdate,
+      contact,
+      address,
+      gender,
+      allergies,
+      medicalhistory,
+      userId,
+    ];
+
+    const result = await pool.query(updateQuery, values);
+
+    // ✅ Return updated user
+    return res.status(200).json({
+      message: 'User updated successfully',
+      user: result.rows[0],
+    });
+
+  } catch (error) {
+    console.error('Error updating user:', error.message);
+    return res.status(500).json({ message: 'Error updating user', error: error.message });
+  }
+});
+
+
 app.get('/api/app/records', async (req, res) => {
   const query = `
     SELECT 
@@ -2270,6 +2381,92 @@ app.post('/api/app/users', async (req, res) => {
     });
   } catch (error) {
     // ✅ Handle duplicate entries (unique constraint violation)
+    if (error.code === '23505') {
+      return res.status(409).json({ message: 'Username or email already exists' });
+    }
+    console.error('Error adding user:', error.message);
+    return res.status(500).json({ message: 'Error adding user', error: error.message });
+  }
+});
+
+app.post('/api/website/users', async (req, res) => {
+  const {
+    username,
+    email,
+    password,
+    usertype,
+    firstname,
+    lastname,
+    birthdate,
+    contact,
+    address,
+    gender,
+    allergies,
+    medicalhistory,
+    adminId // ✅ include adminId from frontend
+  } = req.body;
+
+  // ✅ Basic validation
+  if (!username || !email || !password || !usertype || !firstname || !lastname) {
+    return res.status(400).json({ message: 'Required fields missing' });
+  }
+
+  try {
+    // ✅ Check if username or email already exists
+    const userCheck = await pool.query(
+      'SELECT * FROM users WHERE username = $1 OR email = $2',
+      [username, email]
+    );
+
+    if (userCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'Username or email already exists' });
+    }
+
+    // ✅ Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // ✅ Insert new user
+    const insertQuery = `
+      INSERT INTO users (
+        username, email, password, usertype, firstname, lastname,
+        birthdate, contact, address, gender, allergies, medicalhistory
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      RETURNING *;
+    `;
+    const values = [
+      username,
+      email,
+      hashedPassword,
+      usertype,
+      firstname,
+      lastname,
+      birthdate,
+      contact,
+      address,
+      gender,
+      allergies,
+      medicalhistory,
+    ];
+
+    const result = await pool.query(insertQuery, values);
+    const newUser = result.rows[0];
+
+    // ✅ Log admin activity
+    await logActivity(
+      adminId || null,
+      'ADD',
+      'users',
+      newUser.idusers,
+      `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`
+    );
+
+    // ✅ Return success
+    return res.status(201).json({
+      message: 'User created successfully',
+      user: newUser,
+    });
+
+  } catch (error) {
     if (error.code === '23505') {
       return res.status(409).json({ message: 'Username or email already exists' });
     }
@@ -2496,6 +2693,37 @@ app.post('/api/app/records', async (req, res) => {
 
 // ✅ Get all users from the database
 app.get('/api/app/users', async (req, res) => {
+  const query = 'SELECT * FROM users';
+
+  try {
+    // Step 1: Execute query to fetch all users
+    const result = await pool.query(query);
+
+    // Step 2: Check if no users found
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No users found' });
+    }
+
+    // Step 3: Format birthdate to YYYY-MM-DD for each user
+    const formattedRows = result.rows.map(user => ({
+      ...user,
+      birthdate: user.birthdate
+        ? new Date(user.birthdate).toISOString().split('T')[0]
+        : null
+    }));
+
+    // Step 4: Return users with formatted birthdates
+    return res.status(200).json({
+      records: formattedRows
+    });
+  } catch (err) {
+    console.error('Error fetching users:', err.message);
+    return res.status(500).json({ message: 'Error fetching users', error: err.message });
+  }
+});
+
+// ✅ Get all users from the database
+app.get('/api/website/users', async (req, res) => {
   const query = 'SELECT * FROM users';
 
   try {
@@ -3134,7 +3362,7 @@ app.delete('/api/app/services/:id', async (req, res) => {
 // This endpoint removes a user from the database based on their ID.
 // If the user does not exist, it responds with a 404 error message.
 // If the user cannot be deleted (e.g., linked to other data), it returns a 500 error.
-app.delete('/api/app/users/:id', async (req, res) => {
+app.delete('/api/website/users/:id', async (req, res) => {
   const userId = req.params.id; // Get user ID from URL parameters
   const query = 'DELETE FROM users WHERE idusers = $1'; // SQL query to delete the user
 
@@ -3187,5 +3415,6 @@ async function logActivity(adminId, action, tableName, recordId, description) {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
