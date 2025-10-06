@@ -2299,7 +2299,7 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
   try {
     console.log(`🟦 Undo request received — logId: ${logId}, adminId: ${adminId}`);
 
-    // 1️⃣ Get activity log
+    // 1️⃣ Fetch activity log
     let log;
     try {
       const logResult = await pool.query('SELECT * FROM activity_logs WHERE id = $1', [logId]);
@@ -2324,7 +2324,7 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       return res.status(400).json({ message: 'Cannot undo an UNDO action' });
     }
 
-    // Parse undo_data
+    // 2️⃣ Parse undo_data
     let undoData;
     try {
       undoData = typeof log.undo_data === 'string' ? JSON.parse(log.undo_data) : log.undo_data;
@@ -2339,7 +2339,7 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       return res.status(400).json({ message: 'No undo data available' });
     }
 
-    // 2️⃣ Undo EDIT action only
+    // 3️⃣ Undo based on action type
     if (log.action === 'EDIT') {
       const fields = Object.keys(undoData.data);
       const values = Object.values(undoData.data);
@@ -2353,7 +2353,7 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
 
       const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
       const query = `UPDATE ${log.table_name} SET ${setClause}, updated_at = NOW() WHERE idusers = $${fields.length + 1}`;
-      console.log("📝 Undo SQL query:", query);
+      console.log("📝 Undo EDIT SQL query:", query);
 
       try {
         const undoResult = await pool.query(query, [...values, log.record_id]);
@@ -2363,12 +2363,37 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
         return res.status(500).json({ message: 'Failed to undo EDIT action', error: err.message });
       }
 
+    } else if (log.action === 'DELETE') {
+      const query = `UPDATE ${log.table_name} SET is_deleted = FALSE, deleted_at = NULL, updated_at = NOW() WHERE idusers = $1`;
+      console.log("📝 Undo DELETE SQL query:", query);
+
+      try {
+        const undoResult = await pool.query(query, [log.record_id]);
+        console.log("✅ Undo DELETE result:", undoResult.rowCount, "rows affected");
+      } catch (err) {
+        console.error('❌ Error undoing DELETE action:', err.message);
+        return res.status(500).json({ message: 'Failed to undo DELETE action', error: err.message });
+      }
+
+    } else if (log.action === 'ADD') {
+      const primaryKey = undoData.primary_key || 'idusers';
+      const query = `UPDATE ${log.table_name} SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE ${primaryKey} = $1`;
+      console.log("📝 Undo ADD (soft-delete) SQL query:", query);
+
+      try {
+        const undoResult = await pool.query(query, [undoData.data[primaryKey]]);
+        console.log("✅ Undo ADD result:", undoResult.rowCount, "rows affected");
+      } catch (err) {
+        console.error('❌ Error undoing ADD action:', err.message);
+        return res.status(500).json({ message: 'Failed to undo ADD action', error: err.message });
+      }
+
     } else {
-      console.warn("⚠️ Only EDIT actions can be undone with this endpoint");
-      return res.status(400).json({ message: 'Only EDIT actions can be undone with this endpoint' });
+      console.warn("⚠️ Unsupported action type:", log.action);
+      return res.status(400).json({ message: `Cannot undo action type: ${log.action}` });
     }
 
-    // 3️⃣ Mark log as undone
+    // 4️⃣ Mark log as undone
     try {
       await pool.query(`UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`, [logId]);
       console.log("✅ Activity log marked as undone — logId:", logId);
@@ -2377,16 +2402,16 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       return res.status(500).json({ message: 'Failed to mark log as undone', error: err.message });
     }
 
-    // 4️⃣ Log undo action
+    // 5️⃣ Log undo action
     try {
-      await logActivity(adminId || null, 'UNDO', log.table_name, log.record_id, `Undid EDIT activity log ID ${logId}`, null);
+      await logActivity(adminId || null, 'UNDO', log.table_name, log.record_id, `Undid ${log.action} activity log ID ${logId}`, null);
       console.log("✅ Undo action logged successfully");
     } catch (err) {
       console.error('❌ Error logging undo activity:', err.message);
     }
 
     console.log("🚀 Undo completed successfully");
-    return res.status(200).json({ message: 'Undo successful for EDIT action' });
+    return res.status(200).json({ message: 'Undo successful' });
 
   } catch (error) {
     console.error('💥 Unexpected error performing undo:', error);
@@ -3725,6 +3750,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
