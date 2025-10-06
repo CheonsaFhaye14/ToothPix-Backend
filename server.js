@@ -1788,11 +1788,16 @@ app.delete('/api/website/record/:id', async (req, res) => {
   }
 });
 
+// ✅ Soft-delete a specific appointment (undo-ready)
 app.delete('/api/website/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
   const adminId = req.body.adminId; // optional, for logging
 
+  console.log(`📥 Incoming request to soft-delete appointment ID: ${appointmentId}, adminId: ${adminId}`);
+
+  // 0️⃣ Validate appointment ID
   if (isNaN(appointmentId)) {
+    console.error("❌ Invalid appointment ID:", req.params.id);
     return res.status(400).json({ message: 'Invalid appointment ID' });
   }
 
@@ -1802,41 +1807,56 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
       'SELECT * FROM appointment WHERE idappointment = $1 AND is_deleted = FALSE',
       [appointmentId]
     );
+
     if (appointmentResult.rows.length === 0) {
+      console.warn(`⚠️ Appointment not found or already deleted — ID: ${appointmentId}`);
       return res.status(404).json({ message: 'Appointment not found or already deleted' });
     }
+
     const appointment = appointmentResult.rows[0];
+    console.log("✅ Fetched appointment:", appointment);
 
     const servicesResult = await pool.query(
       'SELECT idservice FROM appointment_services WHERE idappointment = $1',
       [appointmentId]
     );
     const serviceIds = servicesResult.rows.map(r => r.idservice);
+    console.log("✅ Fetched associated services:", serviceIds);
 
     // 2️⃣ Soft delete the appointment
     await pool.query(
       'UPDATE appointment SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE idappointment = $1',
       [appointmentId]
     );
+    console.log("✅ Appointment soft-deleted:", appointmentId);
 
     // 3️⃣ Log admin activity (undo-ready)
     if (adminId) {
+      const undoData = {
+        primary_key: 'idappointment',
+        data: {
+          appointment,
+          services: serviceIds
+        }
+      };
+
+      console.log("🪵 Logging soft-delete activity...");
       await logActivity(
         adminId,
         'DELETE',
         'appointment',
         appointmentId,
         `Soft-deleted appointment ID ${appointmentId} with ${serviceIds.length} services`,
-        { 
-          primary_key: 'idappointment',
-          data: { appointment, services: serviceIds } 
-        }
+        undoData
       );
+      console.log("✅ Activity logged successfully for appointment ID:", appointmentId);
     }
 
+    console.log("🚀 Returning success response");
     return res.status(200).json({ message: 'Appointment soft-deleted successfully' });
+
   } catch (err) {
-    console.error('Error deleting appointment:', err);
+    console.error('💥 Unexpected error deleting appointment:', err);
     return res.status(500).json({ message: 'Error deleting appointment', error: err.message });
   }
 });
@@ -3028,16 +3048,20 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   }
 });
 
-// ✅ Update a specific appointment (with undo-ready activity log)
+// ✅ Update a specific appointment (with undo-ready activity log and verbose logging)
 app.put('/api/website/appointments/:id', async (req, res) => {
   const idappointment = req.params.id;
   const { idpatient, iddentist, date, status, notes, idservice, patient_name, adminId } = req.body;
 
-  // Validate required fields
+  console.log("📥 Incoming request to update appointment:", req.body);
+
+  // 0️⃣ Basic validation
   if (!iddentist || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    console.error("❌ Validation failed: iddentist and idservice array are required.");
     return res.status(400).json({ message: 'iddentist and idservice array are required.' });
   }
   if (!idpatient && !patient_name) {
+    console.error("❌ Validation failed: Either idpatient or patient_name is required.");
     return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
   }
 
@@ -3048,9 +3072,11 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       [idappointment]
     );
     if (existingResult.rows.length === 0) {
+      console.warn(`⚠️ Appointment not found — ID: ${idappointment}`);
       return res.status(404).json({ message: 'Appointment not found' });
     }
     const existingAppointment = existingResult.rows[0];
+    console.log("✅ Existing appointment fetched:", existingAppointment);
 
     // Fetch existing services
     const existingServicesResult = await pool.query(
@@ -3058,6 +3084,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       [idappointment]
     );
     const existingServiceIds = existingServicesResult.rows.map(r => r.idservice);
+    console.log("✅ Existing services fetched:", existingServiceIds);
 
     // 2️⃣ Update appointment
     let updateQuery, queryParams;
@@ -3065,56 +3092,63 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       updateQuery = `
         UPDATE appointment
         SET idpatient = $1, iddentist = $2, date = $3, status = $4, notes = $5, patient_name = NULL, updated_at = NOW()
-        WHERE idappointment = $6
-        RETURNING *
+        WHERE idappointment = $6 RETURNING *;
       `;
-      queryParams = [idpatient, iddentist, date || existingAppointment.date, status || 'pending', notes || '', idappointment];
+      queryParams = [idpatient, iddentist, date || existingAppointment.date, status || existingAppointment.status, notes || existingAppointment.notes, idappointment];
     } else {
       updateQuery = `
         UPDATE appointment
         SET idpatient = NULL, iddentist = $1, date = $2, status = $3, notes = $4, patient_name = $5, updated_at = NOW()
-        WHERE idappointment = $6
-        RETURNING *
+        WHERE idappointment = $6 RETURNING *;
       `;
-      queryParams = [iddentist, date || existingAppointment.date, status || 'pending', notes || '', patient_name, idappointment];
+      queryParams = [iddentist, date || existingAppointment.date, status || existingAppointment.status, notes || existingAppointment.notes, patient_name, idappointment];
     }
 
     const updatedResult = await pool.query(updateQuery, queryParams);
     const updatedAppointment = updatedResult.rows[0];
+    console.log("✅ Appointment updated successfully:", updatedAppointment);
 
     // 3️⃣ Replace services
+    console.log("🔄 Replacing appointment services...");
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
     const insertPromises = idservice.map(sid =>
       pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, sid])
     );
     await Promise.all(insertPromises);
+    console.log("✅ Services replaced:", idservice);
 
-    // 4️⃣ Log single activity for undo
+    // 4️⃣ Prepare undo data
+    const undoData = {
+      primary_key: 'idappointment',
+      data: {
+        oldAppointment: existingAppointment,
+        oldServices: existingServiceIds
+      }
+    };
+
+    // 5️⃣ Log activity for undo
     if (adminId) {
+      console.log("🪵 Logging activity for undo...");
       await logActivity(
         adminId,
         'EDIT',
         'appointment',
         idappointment,
         `Updated appointment ID ${idappointment} for dentist ID ${iddentist} (services replaced)`,
-        {
-          primary_key: 'idappointment',
-          data: {
-            oldAppointment: existingAppointment,
-            oldServices: existingServiceIds
-          }
-        }
+        undoData
       );
+      console.log("✅ Activity logged successfully for appointment ID:", idappointment);
     }
 
-    return res.json({
+    console.log("🚀 Returning success response");
+    return res.status(200).json({
       message: 'Appointment updated successfully',
       appointment: updatedAppointment,
       servicesUpdated: idservice
     });
 
   } catch (error) {
-    console.error('Error updating appointment:', error.message);
+    console.error('💥 Unexpected error updating appointment:', error.message);
     return res.status(500).json({ message: 'Error updating appointment', error: error.message });
   }
 });
@@ -3820,6 +3854,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
