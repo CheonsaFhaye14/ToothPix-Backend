@@ -2257,31 +2257,34 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(500).json({ message: 'Database error updating user', error: err.message });
     }
 
-    // 6️⃣ Prepare undo changes
-    const changes = {};
-    const changedFields = [];
-    ['username','email','usertype','firstname','lastname','birthdate','contact','address','gender','allergies','medicalhistory'].forEach(field => {
-      if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
-        changes[field] = existingUser[field]; // old value for undo
-        changedFields.push(field);
-      }
-    });
+ // 6️⃣ Prepare undo changes
+const changes = {};
+const changedFields = [];
+['username','email','usertype','firstname','lastname','birthdate','contact','address','gender','allergies','medicalhistory'].forEach(field => {
+  if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
+    changes[field] = existingUser[field]; // old value for undo
+    changedFields.push(field);
+  }
+});
 
-    const description = changedFields.length > 0
-      ? `Updated user ${firstname} ${lastname} (${changedFields.join(', ')})`
-      : `Updated user ${firstname} ${lastname} (no visible changes)`;
+const description = changedFields.length > 0
+  ? `Updated user ${firstname} ${lastname} (${changedFields.join(', ')})`
+  : `Updated user ${firstname} ${lastname} (no visible changes)`;
 
-    // 7️⃣ Log activity
-    try {
-      console.log("🪵 Logging activity...");
-      await logActivity(adminId, 'EDIT', 'users', userId, description, changes);
-      console.log("✅ Activity logged successfully for user ID:", userId);
-    } catch (err) {
-      console.error('❌ Error logging activity:', err.message);
-    }
+// 7️⃣ Log activity with proper undo_data structure
+try {
+  console.log("🪵 Logging activity...");
+  await logActivity(adminId, 'EDIT', 'users', userId, description, {
+    data: changes,           // wrap changes in 'data'
+    primary_key: 'idusers',  // optional but recommended
+  });
+  console.log("✅ Activity logged successfully for user ID:", userId);
+} catch (err) {
+  console.error('❌ Error logging activity:', err.message);
+}
 
-    console.log("🚀 Returning success response");
-    return res.status(200).json({ message: 'User updated successfully', user: updatedUser });
+console.log("🚀 Returning success response");
+return res.status(200).json({ message: 'User updated successfully', user: updatedUser });
 
   } catch (error) {
     console.error('💥 Unexpected error updating user:', error.message);
@@ -3659,6 +3662,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
