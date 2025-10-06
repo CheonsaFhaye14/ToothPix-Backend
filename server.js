@@ -2171,6 +2171,7 @@ app.put('/api/website/users/:id', async (req, res) => {
     medicalhistory
   } = req.body;
 
+  // ✅ Basic validation
   if (!username || !email || !firstname || !lastname || !usertype) {
     return res.status(400).json({ message: 'Required fields missing' });
   }
@@ -2181,80 +2182,109 @@ app.put('/api/website/users/:id', async (req, res) => {
   }
 
   try {
-    const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
+    // 1️⃣ Fetch existing user
+    let existingUser;
+    try {
+      const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
+      if (userResult.rows.length === 0) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      existingUser = userResult.rows[0];
+    } catch (err) {
+      console.error('Error fetching user:', err.message);
+      return res.status(500).json({ message: 'Database error fetching user', error: err.message });
     }
 
-    const existingUser = userResult.rows[0];
-
-    const usernameCheck = await pool.query(
-      'SELECT * FROM users WHERE username = $1 AND idusers != $2 AND is_deleted = FALSE',
-      [username, userId]
-    );
-    if (usernameCheck.rows.length > 0) {
-      return res.status(409).json({ message: 'Username already exists' });
+    // 2️⃣ Check unique username
+    try {
+      const usernameCheck = await pool.query(
+        'SELECT * FROM users WHERE username = $1 AND idusers != $2 AND is_deleted = FALSE',
+        [username, userId]
+      );
+      if (usernameCheck.rows.length > 0) {
+        return res.status(409).json({ message: 'Username already exists' });
+      }
+    } catch (err) {
+      console.error('Error checking username uniqueness:', err.message);
+      return res.status(500).json({ message: 'Database error checking username', error: err.message });
     }
 
-    const emailCheck = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND idusers != $2 AND is_deleted = FALSE',
-      [email, userId]
-    );
-    if (emailCheck.rows.length > 0) {
-      return res.status(409).json({ message: 'Email already exists' });
+    // 3️⃣ Check unique email
+    try {
+      const emailCheck = await pool.query(
+        'SELECT * FROM users WHERE email = $1 AND idusers != $2 AND is_deleted = FALSE',
+        [email, userId]
+      );
+      if (emailCheck.rows.length > 0) {
+        return res.status(409).json({ message: 'Email already exists' });
+      }
+    } catch (err) {
+      console.error('Error checking email uniqueness:', err.message);
+      return res.status(500).json({ message: 'Database error checking email', error: err.message });
     }
 
+    // 4️⃣ Handle password hashing if changed
     let hashedPassword = existingUser.password;
     if (password && !(await bcrypt.compare(password, existingUser.password))) {
-      hashedPassword = await bcrypt.hash(password, 10);
+      try {
+        hashedPassword = await bcrypt.hash(password, 10);
+      } catch (err) {
+        console.error('Error hashing password:', err.message);
+        return res.status(500).json({ message: 'Error hashing password', error: err.message });
+      }
     }
 
-    const updateQuery = `
-      UPDATE users
-      SET username = $1,
-          email = $2,
-          password = $3,
-          usertype = $4,
-          firstname = $5,
-          lastname = $6,
-          birthdate = $7,
-          contact = $8,
-          address = $9,
-          gender = $10,
-          allergies = $11,
-          medicalhistory = $12,
-          updated_at = NOW()
-      WHERE idusers = $13
-      RETURNING *;
-    `;
+    // 5️⃣ Update user
+    let updatedUser;
+    try {
+      const updateQuery = `
+        UPDATE users
+        SET username = $1,
+            email = $2,
+            password = $3,
+            usertype = $4,
+            firstname = $5,
+            lastname = $6,
+            birthdate = $7,
+            contact = $8,
+            address = $9,
+            gender = $10,
+            allergies = $11,
+            medicalhistory = $12,
+            updated_at = NOW()
+        WHERE idusers = $13
+        RETURNING *;
+      `;
+      const values = [
+        username,
+        email,
+        hashedPassword,
+        usertype.toLowerCase(),
+        firstname,
+        lastname,
+        birthdate,
+        contact,
+        address,
+        gender,
+        allergies,
+        medicalhistory,
+        userId,
+      ];
 
-    const values = [
-      username,
-      email,
-      hashedPassword,
-      usertype.toLowerCase(),
-      firstname,
-      lastname,
-      birthdate,
-      contact,
-      address,
-      gender,
-      allergies,
-      medicalhistory,
-      userId,
-    ];
+      const result = await pool.query(updateQuery, values);
+      updatedUser = result.rows[0];
+    } catch (err) {
+      console.error('Error updating user:', err.message);
+      return res.status(500).json({ message: 'Database error updating user', error: err.message });
+    }
 
-    const result = await pool.query(updateQuery, values);
-    const updatedUser = result.rows[0];
-
-    // Detect changes for undo
+    // 6️⃣ Prepare undo changes
     const changes = {};
     const changedFields = [];
-
-    ['username', 'email', 'usertype', 'firstname', 'lastname', 'birthdate', 'contact', 'address', 'gender', 'allergies', 'medicalhistory'].forEach(field => {
+    ['username','email','usertype','firstname','lastname','birthdate','contact','address','gender','allergies','medicalhistory'].forEach(field => {
       if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
         changes[field] = existingUser[field]; // old value for undo
-        changedFields.push(field); // for description
+        changedFields.push(field);
       }
     });
 
@@ -2262,8 +2292,12 @@ app.put('/api/website/users/:id', async (req, res) => {
       ? `Updated user ${firstname} ${lastname} (${changedFields.join(', ')})`
       : `Updated user ${firstname} ${lastname} (no visible changes)`;
 
-    // ✅ Only save changed data in undo_data
-    await logActivity(adminId, 'EDIT', 'users', userId, description, changes);
+    // 7️⃣ Log activity
+    try {
+      await logActivity(adminId, 'EDIT', 'users', userId, description, changes);
+    } catch (err) {
+      console.error('Error logging activity:', err.message);
+    }
 
     return res.status(200).json({
       message: 'User updated successfully',
@@ -2271,8 +2305,8 @@ app.put('/api/website/users/:id', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error updating user:', error.message);
-    return res.status(500).json({ message: 'Error updating user', error: error.message });
+    console.error('Unexpected error updating user:', error.message);
+    return res.status(500).json({ message: 'Unexpected error updating user', error: error.message });
   }
 });
 
@@ -2284,12 +2318,17 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     console.log(`🟦 Undo request received — logId: ${logId}, adminId: ${adminId}`);
 
     // 1️⃣ Get activity log
-    const logResult = await pool.query('SELECT * FROM activity_logs WHERE id = $1', [logId]);
-    if (!logResult.rows.length) {
-      return res.status(404).json({ message: 'Activity log not found' });
+    let log;
+    try {
+      const logResult = await pool.query('SELECT * FROM activity_logs WHERE id = $1', [logId]);
+      if (!logResult.rows.length) {
+        return res.status(404).json({ message: 'Activity log not found' });
+      }
+      log = logResult.rows[0];
+    } catch (err) {
+      console.error('Error fetching activity log:', err.message);
+      return res.status(500).json({ message: 'Database error fetching activity log', error: err.message });
     }
-
-    const log = logResult.rows[0];
 
     // Already undone or UNDO action
     if (log.is_undone) return res.status(400).json({ message: 'This action has already been undone' });
@@ -2299,44 +2338,56 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     let undoData;
     try {
       undoData = typeof log.undo_data === 'string' ? JSON.parse(log.undo_data) : log.undo_data;
-    } catch {
-      return res.status(400).json({ message: 'Invalid undo_data format' });
+    } catch (err) {
+      console.error('Error parsing undo_data:', err.message);
+      return res.status(400).json({ message: 'Invalid undo_data format', error: err.message });
     }
 
     if (!undoData?.data) return res.status(400).json({ message: 'No undo data available' });
 
-    // 2️⃣ Undo based on action type
+    // 2️⃣ Undo EDIT action only
     if (log.action === 'EDIT') {
-      // Restore old data
       const fields = Object.keys(undoData.data);
       const values = Object.values(undoData.data);
+      if (!fields.length) {
+        console.error('No fields to undo in edit action.');
+        return res.status(400).json({ message: 'Undo data is empty for EDIT action' });
+      }
+
       const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
       const query = `UPDATE ${log.table_name} SET ${setClause}, updated_at = NOW() WHERE idusers = $${fields.length + 1}`;
-      await pool.query(query, [...values, log.record_id]);
 
-    } else if (log.action === 'DELETE') {
-      // Soft delete restore
-      const query = `UPDATE ${log.table_name} SET is_deleted = FALSE, deleted_at = NULL, updated_at = NOW() WHERE idusers = $1`;
-      await pool.query(query, [log.record_id]);
+      try {
+        await pool.query(query, [...values, log.record_id]);
+      } catch (err) {
+        console.error('Error undoing EDIT action:', err.message);
+        return res.status(500).json({ message: 'Failed to undo EDIT action', error: err.message });
+      }
 
-    } else if (log.action === 'ADD') {
-      // Soft delete instead of permanent delete
-      const primaryKey = undoData.primary_key || 'idusers';
-      const query = `UPDATE ${log.table_name} SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE ${primaryKey} = $1`;
-      await pool.query(query, [undoData.data[primaryKey]]);
+    } else {
+      return res.status(400).json({ message: 'Only EDIT actions can be undone with this endpoint' });
     }
 
     // 3️⃣ Mark log as undone
-    await pool.query(`UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`, [logId]);
+    try {
+      await pool.query(`UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`, [logId]);
+    } catch (err) {
+      console.error('Error marking log as undone:', err.message);
+      return res.status(500).json({ message: 'Failed to mark log as undone', error: err.message });
+    }
 
     // 4️⃣ Log undo action
-    await logActivity(adminId || null, 'UNDO', log.table_name, log.record_id, `Undid activity log ID ${logId}`, null);
+    try {
+      await logActivity(adminId || null, 'UNDO', log.table_name, log.record_id, `Undid EDIT activity log ID ${logId}`, null);
+    } catch (err) {
+      console.error('Error logging undo activity:', err.message);
+    }
 
-    return res.status(200).json({ message: 'Undo successful' });
+    return res.status(200).json({ message: 'Undo successful for EDIT action' });
 
   } catch (error) {
-    console.error('💥 Error performing undo:', error);
-    return res.status(500).json({ message: 'Error performing undo', error: error.message });
+    console.error('💥 Unexpected error performing undo:', error);
+    return res.status(500).json({ message: 'Unexpected error performing undo', error: error.message });
   }
 });
 
@@ -3608,6 +3659,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
