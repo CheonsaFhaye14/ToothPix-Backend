@@ -3283,107 +3283,81 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 });
 
 // Route to add a new service
-app.post('/api/app/services', async (req, res) => {
-  // Extract fields from request body
-  const { name, description, price, category } = req.body;
+app.post('/api/website/services', async (req, res) => {
+  const { name, description, price, category, adminId } = req.body;
 
-  // Validate 'name': must be a non-empty string
+  // ✅ Validate inputs
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
-
-  // Validate 'price': must be a number
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
-
-  // Validate 'category': must be a non-empty string
   if (!category || typeof category !== 'string' || category.trim().length === 0) {
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
   }
 
   try {
-    // SQL query to insert the new service into the database
+    console.log('📝 Inserting new service...');
     const insertQuery = `
       INSERT INTO service (name, description, price, category)
       VALUES ($1, $2, $3, $4)
       RETURNING idservice, name, description, price, category
     `;
-
-    // Execute the insert query with sanitized inputs
     const result = await pool.query(insertQuery, [
       name.trim(),
-      description || null,            // Set description to null if not provided
-      parseFloat(price),              // Ensure price is a float
+      description || null,
+      parseFloat(price),
       category.trim()
     ]);
 
-    const service = result.rows[0];   // Get the inserted service
+    const service = result.rows[0];
     console.log('✅ Service added:', service);
 
-    // Retrieve all FCM tokens from users (if any exist)
-    const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
-    const tokens = tokensResult.rows
-      .map(row => row.fcm_token)
-      .filter(token => typeof token === 'string' && token.trim().length > 0); // Filter out invalid tokens
-
-    // If no FCM tokens found, skip sending notifications
-    if (tokens.length === 0) {
-      console.log('⚠️ No users with FCM tokens.');
-      return res.status(201).json({
-        message: 'Service added successfully',
-        service,
-        notificationSent: false,
-        totalRecipients: 0,
-        successfulNotifications: 0,
-      });
+    // 🧾 Log admin activity
+    try {
+      console.log('🪵 Logging admin activity for service addition...');
+      await logActivity(adminId || null, 'ADD', 'service', service.idservice, 
+        `Added new service: ${service.name} (${service.category})`, 
+        { primary_key: 'idservice', data: { idservice: service.idservice } });
+      console.log('✅ Activity logged successfully for service ID:', service.idservice);
+    } catch (logError) {
+      console.error('❌ Error logging admin activity:', logError);
     }
 
-    // Notification payload content
+    // 🔔 Send notifications to users with FCM tokens
+    const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
+    const tokens = tokensResult.rows.map(r => r.fcm_token).filter(t => t && t.trim().length > 0);
+
+    if (tokens.length === 0) {
+      console.log('⚠️ No users with FCM tokens.');
+      return res.status(201).json({ message: 'Service added successfully', service, notificationSent: false });
+    }
+
     const notificationPayload = {
       notification: {
         title: '🦷 New Dental Service Available',
-        body: `${service.name} has been added to our services list!`,
+        body: `${service.name} has been added to our services list!`
       },
-      data: {
-        serviceId: service.idservice.toString(),
-        serviceName: service.name,
-      },
-      android: {
-        notification: {
-          channelId: 'appointment_channel_id',  // Custom Android notification channel
-          priority: 'high',
-        },
-      }
+      data: { serviceId: service.idservice.toString(), serviceName: service.name },
+      android: { notification: { channelId: 'appointment_channel_id', priority: 'high' } }
     };
 
-    const MAX_BATCH = 500;    // FCM max batch size
-    let totalSuccess = 0;     // Count of successful notifications
+    const MAX_BATCH = 500;
+    let totalSuccess = 0;
 
-    // Send notifications in batches of 500
     for (let i = 0; i < tokens.length; i += MAX_BATCH) {
-      const batch = tokens.slice(i, i + MAX_BATCH); // Get current batch of tokens
-
-      const multicastMessage = {
-        tokens: batch,
-        ...notificationPayload,
-      };
-
-      // Send the notification batch via FCM
+      const batch = tokens.slice(i, i + MAX_BATCH);
+      const multicastMessage = { tokens: batch, ...notificationPayload };
       const response = await admin.messaging().sendEachForMulticast(multicastMessage);
 
       totalSuccess += response.successCount;
-      console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes.`);
-
-      // Log any failed notifications for debugging
+      console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes`);
       response.responses.forEach((resp, idx) => {
-        if (!resp.success) {
-          console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
-        }
+        if (!resp.success) console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
       });
     }
 
-    // Respond with success and notification stats
     return res.status(201).json({
       message: 'Service added and notifications sent successfully',
       service,
@@ -3393,12 +3367,8 @@ app.post('/api/app/services', async (req, res) => {
     });
 
   } catch (err) {
-    // Handle and log unexpected errors
     console.error('❌ Error adding service or sending notifications:', err.stack);
-    return res.status(500).json({
-      message: 'Failed to add service or notify users',
-      error: err.message
-    });
+    return res.status(500).json({ message: 'Failed to add service or notify users', error: err.message });
   }
 });
 
@@ -3427,48 +3397,107 @@ app.get('/api/app/services', async (req, res) => {
   }
 });
 
-// Update service route
-app.put('/api/app/services/:id', async (req, res) => {
-  const { id } = req.params;  // Service ID from URL parameter
-  const { name, description, price } = req.body;  // Data from the request body
+// Get all services route (excluding soft-deleted)
+app.get('/api/website/services', async (req, res) => {
+  const query = 'SELECT * FROM service WHERE is_deleted = FALSE';
 
-  // Validate 'name': must be a non-empty string
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No services found' });
+    }
+
+    return res.status(200).json({
+      services: result.rows
+    });
+  } catch (err) {
+    console.error('Error fetching services:', err.message);
+    return res.status(500).json({ message: 'Error fetching services', error: err.message });
+  }
+});
+
+app.put('/api/website/services/:id', async (req, res) => {
+  const serviceId = req.params.id;
+  const adminId = req.body.admin_id; // Optional: get admin ID from request or JWT
+  const { name, description, price } = req.body;
+
+  // ✅ Validate name
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    console.warn('❌ Name validation failed');
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
 
-  // Validate 'price': must be a valid number
+  // ✅ Validate price
   if (price === undefined || isNaN(price)) {
+    console.warn('❌ Price validation failed');
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
-  // SQL query to update the service based on the provided ID
-  const query = `
-    UPDATE service 
-    SET name = $1, description = $2, price = $3
-    WHERE idservice = $4
-    RETURNING idservice, name, description, price
-  `;
-
   try {
-    // Execute the update query
-    const result = await pool.query(query, [name.trim(), description, parseFloat(price), id]);
-
-    // If no service was found with the given ID
-    if (result.rows.length === 0) {
+    // 1️⃣ Fetch existing service for undo logging
+    const serviceResult = await pool.query(
+      'SELECT * FROM service WHERE idservice = $1 AND is_deleted = FALSE',
+      [serviceId]
+    );
+    if (serviceResult.rows.length === 0) {
+      console.warn('⚠️ Service not found or already deleted:', serviceId);
       return res.status(404).json({ message: 'Service not found' });
     }
 
-    const updatedService = result.rows[0];  // Get the updated service
+    const existingService = serviceResult.rows[0];
+    console.log('🔍 Existing service fetched:', existingService);
 
-    // Respond with success and updated service data
+    // 2️⃣ Update service
+    const updateQuery = `
+      UPDATE service
+      SET name = $1,
+          description = $2,
+          price = $3,
+          updated_at = NOW()
+      WHERE idservice = $4
+      RETURNING idservice, name, description, price, category
+    `;
+    const values = [name.trim(), description || null, parseFloat(price), serviceId];
+    const updateResult = await pool.query(updateQuery, values);
+    const updatedService = updateResult.rows[0];
+    console.log('✅ Service updated:', updatedService);
+
+    // 3️⃣ Prepare undo data
+    const changes = {};
+    ['name', 'description', 'price'].forEach(field => {
+      if (existingService[field]?.toString() !== updatedService[field]?.toString()) {
+        changes[field] = existingService[field]; // old value for undo
+      }
+    });
+
+    // 4️⃣ Log activity
+    try {
+      if (Object.keys(changes).length > 0) {
+        await logActivity(
+          adminId || null,
+          'EDIT',
+          'service',
+          serviceId,
+          `Updated service: ${existingService.name} (fields: ${Object.keys(changes).join(', ')})`,
+          changes
+        );
+        console.log('🪵 Activity logged successfully for service update.');
+      } else {
+        console.log('⚠️ No changes detected, skipping activity log.');
+      }
+    } catch (logErr) {
+      console.error('❌ Error logging activity:', logErr.message);
+    }
+
+    // 5️⃣ Return success response
     return res.status(200).json({
       message: 'Service updated successfully',
-      service: updatedService,
+      service: updatedService
     });
+
   } catch (err) {
-    // Handle any unexpected errors
-    console.error('Error updating service:', err.message);
+    console.error('💥 Unexpected error updating service:', err.message);
     return res.status(500).json({ message: 'Error updating service', error: err.message });
   }
 });
@@ -3477,26 +3506,60 @@ app.put('/api/app/services/:id', async (req, res) => {
 // This endpoint deletes a specific service from the database using its ID.
 // If the service doesn't exist, it returns a 404 error.
 // If the service is linked to other records (in use), it returns an error message.
-app.delete('/api/app/services/:id', async (req, res) => {
-  const serviceId = req.params.id; // Get service ID from URL parameters
-  const query = 'DELETE FROM service WHERE idservice = $1'; // SQL query to delete the service
+app.delete('/api/website/services/:id', async (req, res) => {
+  const serviceId = req.params.id;
+  const adminId = req.body.admin_id; // Optional: get admin ID from request (or JWT)
 
   try {
-    const result = await pool.query(query, [serviceId]); // Execute query
+    // 1️⃣ Fetch the service first
+    const serviceResult = await pool.query(
+      'SELECT * FROM service WHERE idservice = $1 AND is_deleted = FALSE',
+      [serviceId]
+    );
 
-    if (result.rowCount === 0) {
-      // If no rows were affected, service not found
+    if (serviceResult.rows.length === 0) {
+      console.warn('⚠️ Service not found or already deleted:', serviceId);
       return res.status(404).json({ message: 'Service not found' });
     }
 
-    // If deletion successful
-    return res.status(200).json({ message: 'Service deleted successfully' });
+    const service = serviceResult.rows[0];
+
+    // 2️⃣ Soft-delete the service
+    const deleteQuery = `
+      UPDATE service
+      SET is_deleted = TRUE,
+          deleted_at = NOW(),
+          updated_at = NOW()
+      WHERE idservice = $1
+    `;
+    await pool.query(deleteQuery, [serviceId]);
+
+    console.log(`🗑️ Service soft-deleted:`, service.name);
+
+    // 3️⃣ Log activity
+    try {
+      const undoData = { primary_key: 'idservice', data: { idservice: serviceId } };
+      await logActivity(
+        adminId || null,
+        'DELETE',
+        'service',
+        serviceId,
+        `Deleted service: ${service.name} (${service.category})`,
+        undoData
+      );
+      console.log('🪵 Activity logged successfully for service deletion.');
+    } catch (logErr) {
+      console.error('❌ Error logging deletion activity:', logErr.message);
+    }
+
+    return res.status(200).json({ message: 'Service deleted successfully', service });
+
   } catch (err) {
-    // Catch errors (e.g., foreign key constraint)
-    console.error('Error deleting, service in use:', err.message);
-    return res.status(500).json({ message: 'Error deleting, service in use', error: err.message });
+    console.error('💥 Error deleting service:', err.message);
+    return res.status(500).json({ message: 'Error deleting service', error: err.message });
   }
 });
+
 
 // Delete User
 // This endpoint removes a user from the database based on their ID.
