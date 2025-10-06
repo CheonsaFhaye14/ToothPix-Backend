@@ -2047,7 +2047,6 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
        JOIN service s ON aps.idservice = s.idservice
        JOIN appointment a ON aps.idappointment = a.idappointment
        WHERE aps.idappointment = $1
-         AND aps.is_deleted = FALSE
          AND s.is_deleted = FALSE
          AND a.is_deleted = FALSE`,
       [idappointment]
@@ -2394,7 +2393,6 @@ app.get('/api/app/records', async (req, res) => {
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
-            AND aps.is_deleted = FALSE
             AND s.is_deleted = FALSE
         ), ''
       ) AS services,
@@ -2404,7 +2402,6 @@ app.get('/api/app/records', async (req, res) => {
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
-            AND aps.is_deleted = FALSE
             AND s.is_deleted = FALSE
         ), 0
       ) AS totalPrice
@@ -3823,6 +3820,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
