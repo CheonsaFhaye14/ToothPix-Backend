@@ -2281,6 +2281,8 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
   const adminId = req.body.admin_id;
 
   try {
+    console.log(`🟦 Undo request received — logId: ${logId}, adminId: ${adminId}`);
+
     // 1️⃣ Get activity log
     const logResult = await pool.query(
       'SELECT * FROM activity_logs WHERE id = $1',
@@ -2288,26 +2290,39 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     );
 
     if (!logResult.rows.length) {
+      console.error('❌ Activity log not found:', logId);
       return res.status(404).json({ message: 'Activity log not found' });
     }
 
     const log = logResult.rows[0];
+    console.log('🟩 Retrieved log:', log);
 
     if (log.is_undone) {
+      console.warn('⚠️ Attempted to undo an already undone action:', logId);
       return res.status(400).json({ message: 'This action has already been undone' });
     }
 
-    const undoData = typeof log.undo_data === 'string'
-    ? JSON.parse(log.undo_data)
-    : log.undo_data;
+    // Parse undo_data safely
+    let undoData;
+    try {
+      undoData = typeof log.undo_data === 'string'
+        ? JSON.parse(log.undo_data)
+        : log.undo_data;
+    } catch (parseError) {
+      console.error('❌ JSON parse error for undo_data:', log.undo_data, parseError);
+      return res.status(400).json({ message: 'Invalid undo_data format' });
+    }
 
+    console.log('🟦 Parsed undoData:', undoData);
 
     if (!undoData || !undoData.data) {
+      console.error('❌ Missing undo data:', undoData);
       return res.status(400).json({ message: 'No undo data available' });
     }
 
     // 2️⃣ Undo based on action type
     if (log.action === 'EDIT') {
+      console.log('🟠 Undoing EDIT action...');
       const fields = Object.keys(undoData.data);
       const values = Object.values(undoData.data);
       const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
@@ -2317,9 +2332,11 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
         SET ${setClause}, updated_at = NOW()
         WHERE idusers = $${fields.length + 1}
       `;
+      console.log('📘 Running query:', query, values, log.record_id);
       await pool.query(query, [...values, log.record_id]);
 
     } else if (log.action === 'DELETE') {
+      console.log('🟠 Undoing DELETE action...');
       const columns = Object.keys(undoData.data).join(', ');
       const placeholders = Object.keys(undoData.data).map((_, idx) => `$${idx + 1}`).join(', ');
 
@@ -2327,11 +2344,14 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
         INSERT INTO ${log.table_name} (${columns})
         VALUES (${placeholders})
       `;
+      console.log('📘 Running query:', query, Object.values(undoData.data));
       await pool.query(query, Object.values(undoData.data));
 
     } else if (log.action === 'ADD') {
-      const primaryKey = undoData.primary_key || 'idusers'; // fallback to idusers
+      console.log('🟠 Undoing ADD action...');
+      const primaryKey = undoData.primary_key || 'idusers';
       if (!undoData.data[primaryKey]) {
+        console.error('❌ Missing primary key in undo data:', undoData);
         return res.status(400).json({ message: 'Invalid undo data for ADD action' });
       }
 
@@ -2339,6 +2359,7 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
         DELETE FROM ${log.table_name}
         WHERE ${primaryKey} = $1
       `;
+      console.log('📘 Running query:', query, undoData.data[primaryKey]);
       await pool.query(query, [undoData.data[primaryKey]]);
     }
 
@@ -2358,14 +2379,14 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       null
     );
 
+    console.log(`✅ Undo successful for log ID: ${logId}`);
     return res.status(200).json({ message: 'Undo successful' });
 
   } catch (error) {
-    console.error('Error performing undo:', error);
+    console.error('💥 Error performing undo:', error);
     return res.status(500).json({ message: 'Error performing undo', error: error.message });
   }
 });
-
 
 app.get('/api/app/records', async (req, res) => {
   const query = `
@@ -2507,29 +2528,31 @@ app.post('/api/website/users', async (req, res) => {
     gender,
     allergies,
     medicalhistory,
-    adminId // ✅ include adminId from frontend
+    adminId
   } = req.body;
 
-  // Basic validation
+  // ✅ Validation
   if (!username || !email || !password || !usertype || !firstname || !lastname) {
+    console.error("❌ Missing required fields in request body");
     return res.status(400).json({ message: 'Required fields missing' });
   }
 
   try {
-    // Check if username or email already exists
+    console.log("🔍 Checking for existing username/email...");
     const userCheck = await pool.query(
       'SELECT * FROM users WHERE (username = $1 OR email = $2) AND is_deleted = FALSE',
       [username, email]
     );
 
     if (userCheck.rows.length > 0) {
+      console.warn("⚠️ Username or email already exists");
       return res.status(409).json({ message: 'Username or email already exists' });
     }
 
-    // Hash password
+    console.log("🔐 Hashing password...");
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new user
+    console.log("📝 Inserting new user...");
     const insertQuery = `
       INSERT INTO users (
         username, email, password, usertype, firstname, lastname,
@@ -2554,21 +2577,26 @@ app.post('/api/website/users', async (req, res) => {
 
     const result = await pool.query(insertQuery, values);
     const newUser = result.rows[0];
+    console.log("✅ User inserted successfully:", newUser.username);
 
-    // Log admin activity (undo for ADD = DELETE, no undo_data needed)
-await logActivity(
-  adminId || null,
-  'ADD',
-  'users',
-  newUser.idusers,
-  `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
-  {
-    primary_key: "idusers", // important for undo
-    data: { idusers: newUser.idusers }
-  }
-);
-
-
+    // 🧾 Log admin activity
+    try {
+      console.log("🪵 Logging admin activity...");
+      await logActivity(
+        adminId || null,
+        'ADD',
+        'users',
+        newUser.idusers,
+        `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
+        {
+          primary_key: "idusers",
+          data: { idusers: newUser.idusers }
+        }
+      );
+      console.log("✅ Activity logged successfully");
+    } catch (logError) {
+      console.error("❌ Error logging admin activity:", logError);
+    }
 
     return res.status(201).json({
       message: 'User created successfully',
@@ -2577,9 +2605,10 @@ await logActivity(
 
   } catch (error) {
     if (error.code === '23505') {
+      console.warn("⚠️ Duplicate entry detected:", error.detail);
       return res.status(409).json({ message: 'Username or email already exists' });
     }
-    console.error('Error adding user:', error.message);
+    console.error("❌ Error adding user:", error);
     return res.status(500).json({ message: 'Error adding user', error: error.message });
   }
 });
@@ -3627,6 +3656,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
