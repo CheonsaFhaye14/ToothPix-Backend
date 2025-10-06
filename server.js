@@ -3209,6 +3209,30 @@ app.get('/api/app/appointments', async (req, res) => {
   }
 });
 
+// ✅ Get all appointments, sorted by date ascending
+app.get('/api/website/appointments', async (req, res) => {
+  const fetchQuery = `
+    SELECT *
+    FROM appointment
+    WHERE is_deleted = FALSE
+    ORDER BY date ASC, idappointment ASC
+  `;
+
+  try {
+    const result = await pool.query(fetchQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
+    }
+
+    return res.status(200).json({ appointments: result.rows });
+  } catch (err) {
+    console.error('Error fetching appointments:', err.message);
+    return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+  }
+});
+
+
 // In-memory refresh token store (for demo; move to DB for production)
 let refreshTokensStore = [];
 
@@ -3506,6 +3530,31 @@ await logActivity(
 
 // Get all services route (excluding soft-deleted ones)
 app.get('/api/app/services', async (req, res) => {
+  // SQL query to select all services that are not soft-deleted
+  const query = 'SELECT * FROM service WHERE is_deleted = FALSE';
+
+  try {
+    // Execute the query
+    const result = await pool.query(query);
+    
+    // Check if no services were found
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No services found' });
+    }
+
+    // Return the list of services
+    return res.status(200).json({
+      services: result.rows
+    });
+  } catch (err) {
+    // Handle and log any errors
+    console.error('Error fetching services:', err.message);
+    return res.status(500).json({ message: 'Error fetching services', error: err.message });
+  }
+});
+
+// Get all services route (excluding soft-deleted ones)
+app.get('/api/website/services', async (req, res) => {
   // SQL query to select all services that are not soft-deleted
   const query = 'SELECT * FROM service WHERE is_deleted = FALSE';
 
@@ -3861,6 +3910,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
