@@ -2297,7 +2297,10 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       return res.status(400).json({ message: 'This action has already been undone' });
     }
 
-    const undoData = log.undo_data ? JSON.parse(log.undo_data) : null;
+    const undoData = typeof log.undo_data === 'string'
+    ? JSON.parse(log.undo_data)
+    : log.undo_data;
+
 
     if (!undoData || !undoData.data) {
       return res.status(400).json({ message: 'No undo data available' });
@@ -3624,6 +3627,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
