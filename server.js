@@ -3496,24 +3496,30 @@ app.put('/api/website/services/:id', async (req, res) => {
       }
     });
 
-    // 4️⃣ Log activity
-    try {
-      if (Object.keys(changes).length > 0) {
-        await logActivity(
-          adminId || null,
-          'EDIT',
-          'service',
-          serviceId,
-          `Updated service: ${existingService.name} (fields: ${Object.keys(changes).join(', ')})`,
-          changes
-        );
-        console.log('🪵 Activity logged successfully for service update.');
-      } else {
-        console.log('⚠️ No changes detected, skipping activity log.');
-      }
-    } catch (logErr) {
-      console.error('❌ Error logging activity:', logErr.message);
-    }
+   // 4️⃣ Log activity
+try {
+  if (Object.keys(changes).length > 0) {
+    const undoData = {
+      primary_key: 'idservice',
+      data: changes
+    };
+
+    await logActivity(
+      adminId || null,
+      'EDIT',
+      'service',
+      serviceId,
+      `Updated service: ${existingService.name} (fields: ${Object.keys(changes).join(', ')})`,
+      undoData
+    );
+    console.log('🪵 Activity logged successfully for service update.');
+  } else {
+    console.log('⚠️ No changes detected, skipping activity log.');
+  }
+} catch (logErr) {
+  console.error('❌ Error logging activity:', logErr.message);
+}
+
 
     // 5️⃣ Return success response
     return res.status(200).json({
@@ -3533,51 +3539,46 @@ app.put('/api/website/services/:id', async (req, res) => {
 // If the service is linked to other records (in use), it returns an error message.
 app.delete('/api/website/services/:id', async (req, res) => {
   const serviceId = req.params.id;
-  const adminId = req.body.admin_id; // Optional: get admin ID from request (or JWT)
+  const adminId = req.userId; // From auth middleware
 
   try {
-    // 1️⃣ Fetch the service first
-    const serviceResult = await pool.query(
-      'SELECT * FROM service WHERE idservice = $1 AND is_deleted = FALSE',
+    // 1️⃣ Get existing service data before deleting
+    const existingServiceResult = await pool.query(
+      `SELECT * FROM service WHERE idservice = $1 AND is_deleted = FALSE`,
       [serviceId]
     );
 
-    if (serviceResult.rows.length === 0) {
-      console.warn('⚠️ Service not found or already deleted:', serviceId);
-      return res.status(404).json({ message: 'Service not found' });
+    if (existingServiceResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Service not found or already deleted' });
     }
 
-    const service = serviceResult.rows[0];
+    const existingService = existingServiceResult.rows[0];
 
-    // 2️⃣ Soft-delete the service
-    const deleteQuery = `
-      UPDATE service
-      SET is_deleted = TRUE,
-          deleted_at = NOW(),
-          updated_at = NOW()
-      WHERE idservice = $1
-    `;
-    await pool.query(deleteQuery, [serviceId]);
+    // 2️⃣ Soft delete the service
+    const result = await pool.query(
+      `UPDATE service
+       SET is_deleted = TRUE,
+           deleted_at = NOW(),
+           updated_at = NOW()
+       WHERE idservice = $1
+       RETURNING *`,
+      [serviceId]
+    );
 
-    console.log(`🗑️ Service soft-deleted:`, service.name);
+    // 3️⃣ Log activity with undo data (store full existing service data)
+    await logActivity(
+      adminId,
+      'DELETE',
+      'service',
+      serviceId,
+      `Soft-deleted service ${existingService.name} (ID: ${serviceId})`,
+      { data: existingService }
+    );
 
-    // 3️⃣ Log activity
-    try {
-      const undoData = { primary_key: 'idservice', data: { idservice: serviceId } };
-      await logActivity(
-        adminId || null,
-        'DELETE',
-        'service',
-        serviceId,
-        `Deleted service: ${service.name} (${service.category})`,
-        undoData
-      );
-      console.log('🪵 Activity logged successfully for service deletion.');
-    } catch (logErr) {
-      console.error('❌ Error logging deletion activity:', logErr.message);
-    }
-
-    return res.status(200).json({ message: 'Service deleted successfully', service });
+    return res.status(200).json({
+      message: 'Service soft-deleted successfully',
+      service: result.rows[0]
+    });
 
   } catch (err) {
     console.error('💥 Error deleting service:', err.message);
@@ -3750,6 +3751,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
