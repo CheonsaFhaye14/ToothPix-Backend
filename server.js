@@ -2302,6 +2302,12 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       return res.status(400).json({ message: 'This action has already been undone' });
     }
 
+    // 🚫 Prevent undoing an UNDO action
+    if (log.action === 'UNDO') {
+      console.warn('⚠️ Attempted to undo an UNDO action — redundant:', logId);
+      return res.status(400).json({ message: 'Cannot undo an UNDO action' });
+    }
+
     // Parse undo_data safely
     let undoData;
     try {
@@ -3656,6 +3662,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
