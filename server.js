@@ -2284,108 +2284,54 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     console.log(`🟦 Undo request received — logId: ${logId}, adminId: ${adminId}`);
 
     // 1️⃣ Get activity log
-    const logResult = await pool.query(
-      'SELECT * FROM activity_logs WHERE id = $1',
-      [logId]
-    );
-
+    const logResult = await pool.query('SELECT * FROM activity_logs WHERE id = $1', [logId]);
     if (!logResult.rows.length) {
-      console.error('❌ Activity log not found:', logId);
       return res.status(404).json({ message: 'Activity log not found' });
     }
 
     const log = logResult.rows[0];
-    console.log('🟩 Retrieved log:', log);
 
-    if (log.is_undone) {
-      console.warn('⚠️ Attempted to undo an already undone action:', logId);
-      return res.status(400).json({ message: 'This action has already been undone' });
-    }
+    // Already undone or UNDO action
+    if (log.is_undone) return res.status(400).json({ message: 'This action has already been undone' });
+    if (log.action === 'UNDO') return res.status(400).json({ message: 'Cannot undo an UNDO action' });
 
-    // 🚫 Prevent undoing an UNDO action
-    if (log.action === 'UNDO') {
-      console.warn('⚠️ Attempted to undo an UNDO action — redundant:', logId);
-      return res.status(400).json({ message: 'Cannot undo an UNDO action' });
-    }
-
-    // Parse undo_data safely
+    // Parse undo_data
     let undoData;
     try {
-      undoData = typeof log.undo_data === 'string'
-        ? JSON.parse(log.undo_data)
-        : log.undo_data;
-    } catch (parseError) {
-      console.error('❌ JSON parse error for undo_data:', log.undo_data, parseError);
+      undoData = typeof log.undo_data === 'string' ? JSON.parse(log.undo_data) : log.undo_data;
+    } catch {
       return res.status(400).json({ message: 'Invalid undo_data format' });
     }
 
-    console.log('🟦 Parsed undoData:', undoData);
-
-    if (!undoData || !undoData.data) {
-      console.error('❌ Missing undo data:', undoData);
-      return res.status(400).json({ message: 'No undo data available' });
-    }
+    if (!undoData?.data) return res.status(400).json({ message: 'No undo data available' });
 
     // 2️⃣ Undo based on action type
     if (log.action === 'EDIT') {
-      console.log('🟠 Undoing EDIT action...');
+      // Restore old data
       const fields = Object.keys(undoData.data);
       const values = Object.values(undoData.data);
       const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
-
-      const query = `
-        UPDATE ${log.table_name}
-        SET ${setClause}, updated_at = NOW()
-        WHERE idusers = $${fields.length + 1}
-      `;
-      console.log('📘 Running query:', query, values, log.record_id);
+      const query = `UPDATE ${log.table_name} SET ${setClause}, updated_at = NOW() WHERE idusers = $${fields.length + 1}`;
       await pool.query(query, [...values, log.record_id]);
 
     } else if (log.action === 'DELETE') {
-      console.log('🟠 Undoing DELETE action...');
-      const columns = Object.keys(undoData.data).join(', ');
-      const placeholders = Object.keys(undoData.data).map((_, idx) => `$${idx + 1}`).join(', ');
-
-      const query = `
-        INSERT INTO ${log.table_name} (${columns})
-        VALUES (${placeholders})
-      `;
-      console.log('📘 Running query:', query, Object.values(undoData.data));
-      await pool.query(query, Object.values(undoData.data));
+      // Soft delete restore
+      const query = `UPDATE ${log.table_name} SET is_deleted = FALSE, deleted_at = NULL, updated_at = NOW() WHERE idusers = $1`;
+      await pool.query(query, [log.record_id]);
 
     } else if (log.action === 'ADD') {
-      console.log('🟠 Undoing ADD action...');
+      // Soft delete instead of permanent delete
       const primaryKey = undoData.primary_key || 'idusers';
-      if (!undoData.data[primaryKey]) {
-        console.error('❌ Missing primary key in undo data:', undoData);
-        return res.status(400).json({ message: 'Invalid undo data for ADD action' });
-      }
-
-      const query = `
-        DELETE FROM ${log.table_name}
-        WHERE ${primaryKey} = $1
-      `;
-      console.log('📘 Running query:', query, undoData.data[primaryKey]);
+      const query = `UPDATE ${log.table_name} SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE ${primaryKey} = $1`;
       await pool.query(query, [undoData.data[primaryKey]]);
     }
 
     // 3️⃣ Mark log as undone
-    await pool.query(
-      `UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`,
-      [logId]
-    );
+    await pool.query(`UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`, [logId]);
 
     // 4️⃣ Log undo action
-    await logActivity(
-      adminId || null,
-      'UNDO',
-      log.table_name,
-      log.record_id,
-      `Undid activity log ID ${logId}`,
-      null
-    );
+    await logActivity(adminId || null, 'UNDO', log.table_name, log.record_id, `Undid activity log ID ${logId}`, null);
 
-    console.log(`✅ Undo successful for log ID: ${logId}`);
     return res.status(200).json({ message: 'Undo successful' });
 
   } catch (error) {
@@ -3662,6 +3608,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
