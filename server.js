@@ -399,7 +399,7 @@ app.get('/api/app/dental_models/:idrecord', async (req, res) => {
   }
 });
 
-// 📌 Generate payment report for all records
+// 📌 Generate payment report for all records (excluding deleted users, services, and appointments)
 app.get('/api/reports/payments', async (req, res) => {
   const query = `
     SELECT 
@@ -415,11 +415,11 @@ app.get('/api/reports/payments', async (req, res) => {
       r.total_paid,
       r.paymentstatus
     FROM records r
-    LEFT JOIN users p ON p.idusers = r.idpatient       -- Patient (if exists)
-    JOIN users d ON d.idusers = r.iddentist            -- Dentist
-    JOIN appointment a ON a.idappointment = r.idappointment
+    LEFT JOIN users p ON p.idusers = r.idpatient AND p.is_deleted = FALSE   -- Patient (if exists)
+    JOIN users d ON d.idusers = r.iddentist AND d.is_deleted = FALSE         -- Dentist
+    JOIN appointment a ON a.idappointment = r.idappointment AND a.is_deleted = FALSE
     JOIN appointment_services aps ON aps.idappointment = a.idappointment
-    JOIN service s ON s.idservice = aps.idservice
+    JOIN service s ON s.idservice = aps.idservice AND s.is_deleted = FALSE
     GROUP BY 
       r.idrecord, 
       p.firstname, p.lastname, 
@@ -445,7 +445,6 @@ app.get('/api/reports/payments', async (req, res) => {
       return res.status(404).json({ message: 'No payment records found' });
     }
 
-    // Return all payment records with patient, dentist, services, total price, and payment status
     return res.status(200).json({ payments: result.rows });
   } catch (err) {
     console.error('Error fetching payment report:', err.message);
@@ -453,7 +452,8 @@ app.get('/api/reports/payments', async (req, res) => {
   }
 });
 
-// API endpoint to fetch all dental records along with appointment and service details
+
+// API endpoint to fetch all dental records along with appointment and service details (excluding deleted entries)
 app.get('/api/reports/records', async (req, res) => {
   const query = `
     SELECT 
@@ -469,11 +469,11 @@ app.get('/api/reports/records', async (req, res) => {
       STRING_AGG(s.name, ', ') AS services, -- List of services
       r.treatment_notes                     -- Notes for this record
     FROM records r
-    JOIN appointment a ON a.idappointment = r.idappointment
-    LEFT JOIN users p ON p.idusers = a.idpatient
-    JOIN users d ON d.idusers = r.iddentist
+    JOIN appointment a ON a.idappointment = r.idappointment AND a.is_deleted = FALSE
+    LEFT JOIN users p ON p.idusers = a.idpatient AND p.is_deleted = FALSE
+    JOIN users d ON d.idusers = r.iddentist AND d.is_deleted = FALSE
     JOIN appointment_services aps ON aps.idappointment = a.idappointment
-    JOIN service s ON s.idservice = aps.idservice
+    JOIN service s ON s.idservice = aps.idservice AND s.is_deleted = FALSE
     WHERE a.status != 'cancelled'          -- Ignore cancelled appointments
     GROUP BY 
       r.idrecord, 
@@ -517,16 +517,17 @@ app.get('/api/reports/today-appointments', async (req, res) => {
       a.idappointment,
       -- Format time in Manila timezone (HH24:MI)
       to_char(a.date AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS time,
-      -- Use user's full name if exists, otherwise use appointment's patient_name
+      -- Use user's full name if exists and not deleted, otherwise use appointment's patient_name
       COALESCE(u.firstname || ' ' || u.lastname, a.patient_name) AS patient_name,
-      -- Aggregate all services for the appointment
+      -- Aggregate all non-deleted services for the appointment
       STRING_AGG(s.name, ', ') AS services
     FROM appointment a
-    LEFT JOIN users u ON u.idusers = a.idpatient
+    LEFT JOIN users u ON u.idusers = a.idpatient AND u.is_deleted = FALSE
     LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
-    LEFT JOIN service s ON s.idservice = aps.idservice
-    -- Only fetch appointments for today in Manila timezone
+    LEFT JOIN service s ON s.idservice = aps.idservice AND s.is_deleted = FALSE
+    -- Only fetch appointments for today in Manila timezone and not deleted
     WHERE DATE(a.date AT TIME ZONE 'Asia/Manila') = CURRENT_DATE
+      AND a.is_deleted = FALSE
     GROUP BY a.idappointment, a.date, u.firstname, u.lastname, a.patient_name
     ORDER BY 
       to_char(a.date AT TIME ZONE 'Asia/Manila', 'HH24:MI') ASC,
@@ -548,28 +549,29 @@ app.get('/api/reports/today-appointments', async (req, res) => {
   }
 });
 
+
 // API endpoint to fetch 3D dental models along with patient, dentist, and appointment info
 app.get('/api/website/3dmodels', async (req, res) => {
   const query = `
     SELECT
-      r.idrecord,  -- Record ID
-      rm.id AS model_id,  -- Dental model ID
-      rm.before_model_url,  -- GLTF file path before treatment
-      rm.after_model_url,   -- GLTF file path after treatment
-      rm.before_uploaded_at,  -- Upload timestamp for before model
-      rm.after_uploaded_at,   -- Upload timestamp for after model
-      rm.created_at AS model_created_at,  -- Model record creation timestamp
-      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,  -- Patient full name
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,  -- Dentist full name
-      r.treatment_notes,  -- Notes about the treatment
-      a.date AS appointment_date  -- Appointment date
+      r.idrecord,  
+      rm.id AS model_id,  
+      rm.before_model_url,  
+      rm.after_model_url,   
+      rm.before_uploaded_at,  
+      rm.after_uploaded_at,   
+      rm.created_at AS model_created_at,  
+      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,  
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,  
+      r.treatment_notes,  
+      a.date AS appointment_date  
     FROM records r
-    JOIN users p ON r.idpatient = p.idusers  -- Get patient info
-    JOIN users d ON r.iddentist = d.idusers  -- Get dentist info
-    JOIN appointment a ON r.idappointment = a.idappointment  -- Get appointment info
-    LEFT JOIN dental_models rm ON rm.idrecord = r.idrecord  -- Optional 3D model info
-    WHERE r.idpatient IS NOT NULL  -- Only include records linked to a patient
-    ORDER BY a.date DESC, rm.created_at DESC NULLS LAST;  -- Latest appointments and models first
+    JOIN users p ON r.idpatient = p.idusers AND p.is_deleted = FALSE  -- Only active patients
+    JOIN users d ON r.iddentist = d.idusers AND d.is_deleted = FALSE  -- Only active dentists
+    JOIN appointment a ON r.idappointment = a.idappointment AND a.is_deleted = FALSE  -- Only active appointments
+    LEFT JOIN dental_models rm ON rm.idrecord = r.idrecord  
+    WHERE r.idpatient IS NOT NULL AND r.is_deleted = FALSE  -- Only include active records linked to a patient
+    ORDER BY a.date DESC, rm.created_at DESC NULLS LAST;
   `;
 
   try {
@@ -579,33 +581,38 @@ app.get('/api/website/3dmodels', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
-    return res.status(200).json({ models: result.rows });  // Return fetched models
+    return res.status(200).json({ models: result.rows });
   } catch (err) {
     console.error('Error fetching 3D models:', err.message);
     return res.status(500).json({ message: 'Error fetching 3D models', error: err.message });
   }
 });
 
+
 // API endpoint to fetch top services based on usage, unique patients, and revenue
 app.get('/api/reports/top-services', async (req, res) => {
   const query = `
     SELECT 
-      s.name AS service_name,  -- Service name
-      COALESCE(COUNT(aps.idappointment), 0) AS usage_count,  -- Total times the service was used
-      COALESCE(COUNT(DISTINCT a.idappointment), 0) AS unique_appointments,  -- Number of distinct appointments including this service
+      s.name AS service_name,  
+      COALESCE(COUNT(aps.idappointment), 0) AS usage_count,  
+      COALESCE(COUNT(DISTINCT a.idappointment), 0) AS unique_appointments,  
       COALESCE(COUNT(DISTINCT 
         CASE 
-          WHEN a.idpatient IS NOT NULL THEN a.idpatient::text  -- If patient exists, use patient ID
-          ELSE a.patient_name  -- Otherwise, use the name entered for walk-in/guest
+          WHEN a.idpatient IS NOT NULL THEN a.idpatient::text  
+          ELSE a.patient_name  
         END
-      ), 0) AS unique_patients,  -- Number of unique patients who received this service
-      COALESCE(SUM(s.price), 0) AS total_revenue  -- Total revenue generated from this service
+      ), 0) AS unique_patients,  
+      COALESCE(SUM(s.price), 0) AS total_revenue  
     FROM service s
-    LEFT JOIN appointment_services aps ON s.idservice = aps.idservice  -- Join to link service usage to appointments
-    LEFT JOIN appointment a ON a.idappointment = aps.idappointment AND a.status = 'completed'  -- Only consider completed appointments
-    LEFT JOIN records r ON r.idappointment = a.idappointment  -- Optional: join records for additional info
+    LEFT JOIN appointment_services aps ON s.idservice = aps.idservice  
+    LEFT JOIN appointment a 
+      ON a.idappointment = aps.idappointment 
+      AND a.status = 'completed' 
+      AND a.is_deleted = FALSE  -- Only active appointments
+    LEFT JOIN users u ON u.idusers = a.idpatient AND u.is_deleted = FALSE  -- Only active patients
+    WHERE s.is_deleted = FALSE  -- Only active services
     GROUP BY s.name
-    ORDER BY usage_count DESC;  -- Most used services appear first
+    ORDER BY usage_count DESC;
   `;
 
   try {
@@ -615,49 +622,44 @@ app.get('/api/reports/top-services', async (req, res) => {
       return res.status(404).json({ message: 'No service usage data found' });
     }
 
-    return res.status(200).json({ topServices: result.rows });  // Return top services report
+    return res.status(200).json({ topServices: result.rows });  
   } catch (err) {
     console.error('Error fetching top services report:', err.message);
     return res.status(500).json({ message: 'Error fetching top services report', error: err.message });
   }
 });
 
-// GET /api/website/appointments/report - Fetch all appointments with details
+
+// GET /api/website/appointments/report - Fetch all active appointments with details
 app.get('/api/website/appointments/report', async (req, res) => {
-  // SQL query to fetch appointment details including patient, dentist, date, status, notes, and services
   const query = `
     SELECT 
       a.idappointment,
-      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,  -- Patient full name
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,  -- Dentist full name
-      TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH12:MI AM') AS formatted_date,  -- Formatted date/time
-      a.status,  -- Appointment status
-      a.notes,   -- Any notes
-      STRING_AGG(s.name, ', ') AS services  -- List of services in this appointment
+      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,  
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,  
+      TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH12:MI AM') AS formatted_date,  
+      a.status,  
+      a.notes,  
+      STRING_AGG(s.name, ', ') AS services  
     FROM appointment a
-    LEFT JOIN users p ON a.idpatient = p.idusers
-    LEFT JOIN users d ON a.iddentist = d.idusers
+    LEFT JOIN users p ON a.idpatient = p.idusers AND p.is_deleted = FALSE  -- Only active patients
+    LEFT JOIN users d ON a.iddentist = d.idusers AND d.is_deleted = FALSE  -- Only active dentists
     LEFT JOIN appointment_services aps ON aps.idappointment = a.idappointment
-    LEFT JOIN service s ON aps.idservice = s.idservice
+    LEFT JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE  -- Only active services
+    WHERE a.is_deleted = FALSE  -- Only active appointments
     GROUP BY a.idappointment, patient_name, dentist_name, a.date, a.status, a.notes
     ORDER BY a.idappointment;
   `;
 
   try {
-    // Execute the query
     const result = await pool.query(query);
 
-    // If no appointments found, return 404
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No appointments found' });
     }
 
-    // Return all appointments in JSON format
-    return res.status(200).json({
-      records: result.rows
-    });
+    return res.status(200).json({ records: result.rows });
   } catch (err) {
-    // Handle database errors
     console.error('Error fetching appointments:', err.message);
     return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   }
@@ -668,59 +670,54 @@ app.get('/api/website/appointments/report', async (req, res) => {
 app.get('/api/fullreport', async (req, res) => {
   const { status, dentist, date } = req.query;
 
-  // Base query to fetch appointment, patient, dentist, payment, and service details
   let query = `
     SELECT
       a.idappointment AS id,
-      CONCAT(p.firstname, ' ', p.lastname) AS patient,  -- Patient full name
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist,  -- Dentist full name
-      a.status,                                        -- Appointment status
-      a.date,                                          -- Appointment date/time
-      r.paymentstatus,                                 -- Payment status
-      r.total_paid,                                    -- Total paid for this record
-      s.name AS service,                               -- Service name
-      s.price AS service_price                         -- Service price
+      CONCAT(p.firstname, ' ', p.lastname) AS patient,
+      CONCAT(d.firstname, ' ', d.lastname) AS dentist,
+      a.status,
+      a.date,
+      r.paymentstatus,
+      r.total_paid,
+      s.name AS service,
+      s.price AS service_price
     FROM appointment a
-    JOIN users p ON a.idpatient = p.idusers           -- Link patient
-    JOIN users d ON a.iddentist = d.idusers          -- Link dentist
-    LEFT JOIN records r ON a.idappointment = r.idappointment  -- Optional payment record
-    LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment  -- Link services
-    LEFT JOIN service s ON aps.idservice = s.idservice           -- Service details
-    WHERE 1=1
+    JOIN users p ON a.idpatient = p.idusers AND p.is_deleted = FALSE
+    JOIN users d ON a.iddentist = d.idusers AND d.is_deleted = FALSE
+    LEFT JOIN records r ON a.idappointment = r.idappointment
+    LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment
+    LEFT JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE
+    WHERE a.is_deleted = FALSE
   `;
 
   const params = [];
 
-  // ✅ Optional filter by appointment status
   if (status) {
     query += ` AND a.status ILIKE $${params.length + 1}`;
     params.push(`%${status}%`);
   }
 
-  // ✅ Optional filter by dentist name
   if (dentist) {
     query += ` AND CONCAT(d.firstname, ' ', d.lastname) ILIKE $${params.length + 1}`;
     params.push(`%${dentist}%`);
   }
 
-  // ✅ Optional filter by appointment date
   if (date) {
     query += ` AND DATE(a.date) = $${params.length + 1}`;
     params.push(date);
   }
 
-  // ✅ Sort results by newest appointment first
   query += ` ORDER BY a.date DESC`;
 
   try {
-    // Execute query with parameters
     const result = await pool.query(query, params);
-
-    // Return all matched records
-    return res.json(result.rows);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
+    }
+    return res.status(200).json(result.rows);
   } catch (err) {
-    console.error('Error fetching report data:', err);
-    return res.status(500).json({ error: 'Failed to fetch report data' });
+    console.error('Error fetching report data:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch report data', details: err.message });
   }
 });
 
@@ -838,24 +835,21 @@ app.post('/api/website/login', [
 
 // GET /api/admin - Fetch all admin users
 app.get('/api/admin', async (req, res) => {
-  // SQL query to get id, email, and username of users with 'admin' usertype
-  const query = "SELECT idusers, email, username FROM users WHERE usertype = 'admin'";
+  const query = `
+    SELECT idusers, email, username
+    FROM users
+    WHERE usertype = 'admin' AND is_deleted = FALSE
+  `;
 
   try {
-    // Execute query
     const result = await pool.query(query);
 
-    // If no admins found, return 404
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No admin found' });
     }
 
-    // Return list of admins
-    return res.status(200).json({
-      admin: result.rows
-    });
+    return res.status(200).json({ admin: result.rows });
   } catch (err) {
-    // Handle database errors
     console.error('Error fetching admin:', err.message);
     return res.status(500).json({ message: 'Error fetching admin', error: err.message });
   }
@@ -953,65 +947,62 @@ app.post('/api/app/appointments', async (req, res) => {
 app.get('/api/website/admindashboard', async (req, res) => {
   const query = `
     WITH 
-    -- Total appointments for today
+    -- Total appointments for today (exclude deleted)
     appointments_today AS (
       SELECT COUNT(*) AS total
       FROM appointment
       WHERE DATE(date AT TIME ZONE 'Asia/Manila') = CURRENT_DATE
+        AND is_deleted = FALSE
     ),
-    -- Total earnings for this month
+    -- Total earnings for this month (exclude deleted appointments)
     this_month_earnings AS (
-      SELECT 
-        SUM(r.total_paid) AS total_earnings
+      SELECT SUM(r.total_paid) AS total_earnings
       FROM records r
       JOIN appointment a ON a.idappointment = r.idappointment
       WHERE r.paymentstatus IN ('paid', 'partial')
         AND DATE_TRUNC('month', a.date AT TIME ZONE 'Asia/Manila') = DATE_TRUNC('month', CURRENT_DATE)
+        AND a.is_deleted = FALSE
     ),
-    -- Top 3 most used services
+    -- Top 3 most used services (exclude deleted services and appointments)
     top_services AS (
-      SELECT 
-        s.name,
-        COUNT(*) AS usage_count
+      SELECT s.name, COUNT(*) AS usage_count
       FROM appointment_services aps
-      JOIN service s ON aps.idservice = s.idservice
+      JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE
+      JOIN appointment a ON a.idappointment = aps.idappointment AND a.is_deleted = FALSE
       GROUP BY s.name
       ORDER BY usage_count DESC
       LIMIT 3
     ),
-    -- Top 3 dentists based on completed appointments
+    -- Top 3 dentists based on completed appointments (exclude deleted users and appointments)
     top_dentists AS (
-      SELECT 
-        a.iddentist,
-        CONCAT(u.firstname, ' ', u.lastname) AS fullname,
-        COUNT(*) AS patients_helped
+      SELECT a.iddentist,
+             CONCAT(u.firstname, ' ', u.lastname) AS fullname,
+             COUNT(*) AS patients_helped
       FROM appointment a
-      JOIN users u ON u.idusers = a.iddentist
-      WHERE a.status = 'completed'
+      JOIN users u ON u.idusers = a.iddentist AND u.is_deleted = FALSE
+      WHERE a.status = 'completed' AND a.is_deleted = FALSE
       GROUP BY a.iddentist, fullname
       ORDER BY patients_helped DESC
       LIMIT 3
     ),
-    -- Monthly sales for the past 12 months
+    -- Monthly sales for the past 12 months (exclude deleted appointments)
     monthly_sales AS (
-      SELECT 
-        TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM') AS month,
-        SUM(r.total_paid) AS total_sales
+      SELECT TO_CHAR(a.date AT TIME ZONE 'Asia/Manila', 'YYYY-MM') AS month,
+             SUM(r.total_paid) AS total_sales
       FROM records r
-      JOIN appointment a ON a.idappointment = r.idappointment
+      JOIN appointment a ON a.idappointment = r.idappointment AND a.is_deleted = FALSE
       WHERE r.paymentstatus IN ('paid', 'partial')
       GROUP BY month
       ORDER BY month DESC
       LIMIT 12
     )
-
     -- Combine all dashboard data into a single row
     SELECT 
       (SELECT total FROM appointments_today) AS totalAppointmentsToday,
       (SELECT total_earnings FROM this_month_earnings) AS thisMonthEarnings,
-      (SELECT JSON_AGG(ts) FROM top_services ts) AS topServices,
-      (SELECT JSON_AGG(td) FROM top_dentists td) AS topDentists,
-      (SELECT JSON_AGG(ms) FROM monthly_sales ms) AS monthlySales;
+      (SELECT COALESCE(JSON_AGG(ts), '[]') FROM top_services ts) AS topServices,
+      (SELECT COALESCE(JSON_AGG(td), '[]') FROM top_dentists td) AS topDentists,
+      (SELECT COALESCE(JSON_AGG(ms), '[]') FROM monthly_sales ms) AS monthlySales;
   `;
 
   try {
@@ -1023,13 +1014,12 @@ app.get('/api/website/admindashboard', async (req, res) => {
 
     const row = result.rows[0];
 
-    // Return structured dashboard data
     return res.status(200).json({
-      totalAppointmentsToday: row.totalappointmentstoday || 0,
+      totalAppointmentsToday: parseInt(row.totalappointmentstoday) || 0,
       thisMonthEarnings: parseFloat(row.thismonthearnings) || 0,
-      topServices: row.topservices || [],
-      topDentists: row.topdentists || [],
-      monthlySales: row.monthlysales || [],
+      topServices: row.topservices,
+      topDentists: row.topdentists,
+      monthlySales: row.monthlysales,
     });
   } catch (err) {
     console.error('Error fetching admin dashboard data:', err.message);
@@ -1037,7 +1027,7 @@ app.get('/api/website/admindashboard', async (req, res) => {
   }
 });
 
-// API endpoint to create a new appointment (with activity log)
+// API endpoint to create a new appointment (with a single activity log)
 app.post('/api/website/appointments', async (req, res) => {
   const { idpatient, iddentist, date, status, notes, idservice, patient_name, adminId } = req.body;
 
@@ -1049,10 +1039,9 @@ app.post('/api/website/appointments', async (req, res) => {
   }
 
   try {
+    // 1️⃣ Insert the appointment
     let insertQuery, insertValues;
-
     if (idpatient) {
-      // For registered patients
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes)
         VALUES ($1, $2, $3, $4, $5)
@@ -1060,7 +1049,6 @@ app.post('/api/website/appointments', async (req, res) => {
       `;
       insertValues = [idpatient, iddentist, date, status || 'pending', notes || ''];
     } else {
-      // For walk-in patients
       insertQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, status, notes, patient_name)
         VALUES (NULL, $1, $2, $3, $4, $5)
@@ -1069,34 +1057,38 @@ app.post('/api/website/appointments', async (req, res) => {
       insertValues = [iddentist, date, status || 'pending', notes || '', patient_name];
     }
 
-    // Insert the appointment record
     const appointmentResult = await pool.query(insertQuery, insertValues);
     const appointment = appointmentResult.rows[0];
 
-    // Insert appointment services
-    const serviceInsertPromises = idservice.map(serviceId => {
-      const insertServiceQuery = `
-        INSERT INTO appointment_services (idappointment, idservice)
-        VALUES ($1, $2)
-      `;
-      return pool.query(insertServiceQuery, [appointment.idappointment, serviceId]);
-    });
-    await Promise.all(serviceInsertPromises);
+    // 2️⃣ Insert appointment services
+    const serviceInsertPromises = idservice.map(serviceId =>
+      pool.query(`INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2) RETURNING idappointment, idservice`, 
+      [appointment.idappointment, serviceId])
+    );
 
-    // 🪵 Log admin activity (if adminId provided)
+    const insertedServices = await Promise.all(serviceInsertPromises);
+    const serviceIds = insertedServices.map(s => s.rows[0].idservice);
+
+    // 3️⃣ Log a single activity with all undo data
     if (adminId) {
       await logActivity(
         adminId,
         'ADD',
         'appointment',
         appointment.idappointment,
-        `Created a new appointment (ID: ${appointment.idappointment}) for dentist ID ${iddentist}`
+        `Created a new appointment (ID: ${appointment.idappointment}) for dentist ID ${iddentist} with ${serviceIds.length} services`,
+        { 
+          primary_key: 'idappointment',
+          data: {
+            appointment: appointment,
+            services: serviceIds
+          }
+        }
       );
     }
 
-    // 🛎 Send notifications
+    // 4️⃣ Send notifications
     const utcDate = new Date(appointment.date);
-
     const notify = async (id, role) => {
       const { rows } = await pool.query(`SELECT fcm_token FROM users WHERE idusers = $1`, [id]);
       const token = rows[0]?.fcm_token;
@@ -1125,6 +1117,7 @@ app.post('/api/website/appointments', async (req, res) => {
     return res.status(201).json({
       message: 'Appointment created, notifications sent, and activity logged successfully',
       appointment,
+      servicesAdded: serviceIds
     });
 
   } catch (err) {
@@ -1132,7 +1125,6 @@ app.post('/api/website/appointments', async (req, res) => {
     return res.status(500).json({ message: 'Error creating appointment', error: err.message });
   }
 });
-
 
 // API endpoint to get patient reports
 app.get('/api/website/report/patients', async (req, res) => {
@@ -1152,15 +1144,19 @@ app.get('/api/website/report/patients', async (req, res) => {
       LEFT JOIN appointment a 
         ON a.idpatient = p.idusers
         AND a.status = 'completed'  -- only completed appointments
+        AND a.is_deleted = FALSE
       LEFT JOIN users d 
         ON a.iddentist = d.idusers
+        AND d.is_deleted = FALSE
       LEFT JOIN records r 
         ON r.idappointment = a.idappointment
       LEFT JOIN appointment_services aps 
         ON aps.idappointment = a.idappointment
       LEFT JOIN service s 
         ON aps.idservice = s.idservice
+        AND s.is_deleted = FALSE
       WHERE p.usertype = 'patient'
+        AND p.is_deleted = FALSE
         AND a.idappointment IS NOT NULL  -- exclude patients with no completed appointments
       GROUP BY 
         p.idusers, p.firstname, p.lastname, p.birthdate, p.gender,
@@ -1170,7 +1166,6 @@ app.get('/api/website/report/patients', async (req, res) => {
 
     const result = await pool.query(query);
 
-    // Return patient report data
     return res.status(200).json({
       message: 'Patient report fetched successfully',
       patients: result.rows
@@ -1181,6 +1176,7 @@ app.get('/api/website/report/patients', async (req, res) => {
     return res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
 
 // Get all completed records for a specific patient
 app.get('/api/app/patientrecords/:id', async (req, res) => { 
@@ -1201,6 +1197,7 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
+            AND s.is_deleted = FALSE
         ), ''
       ) AS servicesWithPrices,    -- List of services with prices
       COALESCE(
@@ -1209,6 +1206,7 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
+            AND s.is_deleted = FALSE
         ), 0
       ) AS totalPrice,            -- Total price for appointment
       COALESCE(r.total_paid, 0) AS totalPaid,  -- Amount paid
@@ -1218,13 +1216,15 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
+            AND s.is_deleted = FALSE
         ), 0
       ) - COALESCE(r.total_paid, 0)) AS stillOwe    -- Remaining balance
     FROM records r
-    LEFT JOIN users d ON r.iddentist = d.idusers
-    LEFT JOIN appointment a ON r.idappointment = a.idappointment
+    LEFT JOIN users d ON r.iddentist = d.idusers AND d.is_deleted = FALSE
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment AND a.is_deleted = FALSE
     WHERE r.idpatient = $1
       AND a.status = 'completed'      -- Only completed appointments
+      AND r.is_deleted = FALSE
     ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
@@ -1235,7 +1235,6 @@ app.get('/api/app/patientrecords/:id', async (req, res) => {
       return res.status(404).json({ message: 'No completed records found for this patient' });
     }
 
-    // Return detailed records
     return res.status(200).json({
       message: 'Patient completed records fetched successfully',
       records: result.rows
@@ -1321,35 +1320,25 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
       a.date AS appointmentDate,                                 -- Appointment date
       r.paymentstatus,                                           -- Payment status
       r.treatment_notes,                                         -- Treatment notes
-      COALESCE(
-        (
-          SELECT STRING_AGG(s.name || ' ' || s.price, ', ')    -- List of services with prices
-          FROM appointment_services aps
-          JOIN service s ON aps.idservice = s.idservice
-          WHERE aps.idappointment = r.idappointment
-        ), ''
-      ) AS servicesWithPrices,
-      COALESCE(
-        (
-          SELECT SUM(s.price)                                   -- Total price of services
-          FROM appointment_services aps
-          JOIN service s ON aps.idservice = s.idservice
-          WHERE aps.idappointment = r.idappointment
-        ), 0
-      ) AS totalPrice,
-      COALESCE(r.total_paid, 0) AS totalPaid,                   -- Total paid by patient
-      (COALESCE(
-        (
-          SELECT SUM(s.price)                                   -- Calculate remaining balance
-          FROM appointment_services aps
-          JOIN service s ON aps.idservice = s.idservice
-          WHERE aps.idappointment = r.idappointment
-        ), 0
-      ) - COALESCE(r.total_paid, 0)) AS stillOwe
+      COALESCE(services.servicesWithPrices, '') AS servicesWithPrices,
+      COALESCE(services.totalPrice, 0) AS totalPrice,
+      COALESCE(r.total_paid, 0) AS totalPaid,
+      (COALESCE(services.totalPrice, 0) - COALESCE(r.total_paid, 0)) AS stillOwe
     FROM records r
-    LEFT JOIN users p ON r.idpatient = p.idusers                -- Join with patients table
-    LEFT JOIN appointment a ON r.idappointment = a.idappointment -- Join with appointment table
-    WHERE r.iddentist = $1                                      -- Filter by dentist ID
+    LEFT JOIN users p ON r.idpatient = p.idusers AND p.is_deleted = FALSE
+    LEFT JOIN appointment a ON r.idappointment = a.idappointment AND a.is_deleted = FALSE
+    LEFT JOIN (
+      SELECT 
+        aps.idappointment,
+        STRING_AGG(s.name || ' ' || s.price, ', ') AS servicesWithPrices,
+        SUM(s.price) AS totalPrice
+      FROM appointment_services aps
+      JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE
+      JOIN appointment a ON aps.idappointment = a.idappointment AND a.is_deleted = FALSE
+      GROUP BY aps.idappointment
+    ) services ON services.idappointment = r.idappointment
+    WHERE r.iddentist = $1
+      AND r.is_deleted = FALSE
     ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
@@ -1799,38 +1788,56 @@ app.delete('/api/website/record/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/app/appointments/:id', async (req, res) => {
+app.delete('/api/website/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
+  const adminId = req.body.adminId; // optional, for logging
 
-  // ✅ Validate appointment ID
   if (isNaN(appointmentId)) {
     return res.status(400).json({ message: 'Invalid appointment ID' });
   }
 
-  console.log('Deleting appointment with id:', appointmentId, 'type:', typeof appointmentId);
-
-  // 🔹 Delete appointment from database
-  // Note: If your DB has ON DELETE CASCADE, related rows in appointment_services or records will be deleted automatically
-  const query = 'DELETE FROM appointment WHERE idappointment = $1';
-
   try {
-    const result = await pool.query(query, [appointmentId]);
+    // 1️⃣ Fetch existing appointment and services
+    const appointmentResult = await pool.query(
+      'SELECT * FROM appointment WHERE idappointment = $1 AND is_deleted = FALSE',
+      [appointmentId]
+    );
+    if (appointmentResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Appointment not found or already deleted' });
+    }
+    const appointment = appointmentResult.rows[0];
 
-    // ❌ No appointment found
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Appointment not found' });
+    const servicesResult = await pool.query(
+      'SELECT idservice FROM appointment_services WHERE idappointment = $1',
+      [appointmentId]
+    );
+    const serviceIds = servicesResult.rows.map(r => r.idservice);
+
+    // 2️⃣ Soft delete the appointment
+    await pool.query(
+      'UPDATE appointment SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE idappointment = $1',
+      [appointmentId]
+    );
+
+    // 3️⃣ Log admin activity (undo-ready)
+    if (adminId) {
+      await logActivity(
+        adminId,
+        'DELETE',
+        'appointment',
+        appointmentId,
+        `Soft-deleted appointment ID ${appointmentId} with ${serviceIds.length} services`,
+        { 
+          primary_key: 'idappointment',
+          data: { appointment, services: serviceIds } 
+        }
+      );
     }
 
-    // ✅ Successfully deleted
-    return res.status(200).json({ message: 'Appointment deleted successfully' });
+    return res.status(200).json({ message: 'Appointment soft-deleted successfully' });
   } catch (err) {
-    console.error('Error deleting appointment, possibly in use:', err);
-
-    // 🛑 Catch foreign key constraints or other DB errors
-    return res.status(500).json({ 
-      message: 'Error deleting appointment, possibly in use', 
-      error: err.message 
-    });
+    console.error('Error deleting appointment:', err);
+    return res.status(500).json({ message: 'Error deleting appointment', error: err.message });
   }
 });
 
@@ -1840,12 +1847,16 @@ WITH appointment_info AS (
   SELECT
     a.idappointment,
     a.date,
-    -- If patient exists, use full name; otherwise fallback to patient_name stored in appointment
-    COALESCE(NULLIF(CONCAT(p.firstname, ' ', p.lastname), ' '), a.patient_name) AS patient_name,
+    -- Use patient full name if exists and not deleted; otherwise fallback to appointment's patient_name
+    CASE 
+      WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE THEN CONCAT(p.firstname, ' ', p.lastname)
+      ELSE a.patient_name
+    END AS patient_name,
     CONCAT(d.firstname, ' ', d.lastname) AS dentist_name
   FROM appointment a
   LEFT JOIN users p ON a.idpatient = p.idusers
   JOIN users d ON a.iddentist = d.idusers
+  WHERE a.is_deleted = FALSE
 )
 SELECT
   ai.idappointment,
@@ -1857,8 +1868,8 @@ SELECT
   r.treatment_notes
 FROM appointment_info ai
 JOIN appointment_services aps ON ai.idappointment = aps.idappointment
-JOIN service s ON aps.idservice = s.idservice
-LEFT JOIN records r ON r.idappointment = ai.idappointment
+JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE
+LEFT JOIN records r ON r.idappointment = ai.idappointment AND r.is_deleted = FALSE
 GROUP BY
   ai.idappointment,
   ai.date,
@@ -1894,13 +1905,14 @@ app.get('/api/website/payment', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // STEP 1: Insert missing records for past appointments (if any)
+    // STEP 1: Insert missing records for past appointments (if any), only for non-deleted appointments
     const insertMissingRecordsQuery = `
       INSERT INTO records (idpatient, iddentist, idappointment)
       SELECT a.idpatient, a.iddentist, a.idappointment
       FROM appointment a
       LEFT JOIN records r ON r.idappointment = a.idappointment
       WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
+        AND a.is_deleted = FALSE
         AND r.idappointment IS NULL;
     `;
     await client.query(insertMissingRecordsQuery);
@@ -1911,24 +1923,31 @@ app.get('/api/website/payment', async (req, res) => {
         a.idappointment,
         a.date,
         CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-        COALESCE(NULLIF(CONCAT(p.firstname, ' ', p.lastname), ' '), a.patient_name) AS patient_name,
+        CASE
+          WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE THEN CONCAT(p.firstname, ' ', p.lastname)
+          ELSE a.patient_name
+        END AS patient_name,
         STRING_AGG(s.name || ' ' || s.price, ', ') AS services_with_prices,
         SUM(s.price) AS total_price,
         r.paymentstatus,
-        r.total_paid,
-        (SUM(s.price) - r.total_paid) AS still_owe
+        COALESCE(r.total_paid, 0) AS total_paid,
+        (SUM(s.price) - COALESCE(r.total_paid, 0)) AS still_owe
       FROM appointment a
       LEFT JOIN users p ON a.idpatient = p.idusers
       JOIN users d ON a.iddentist = d.idusers
       JOIN appointment_services aps ON a.idappointment = aps.idappointment
-      JOIN service s ON aps.idservice = s.idservice
-      JOIN records r ON r.idappointment = a.idappointment
+      JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE
+      JOIN records r ON r.idappointment = a.idappointment AND r.is_deleted = FALSE
       WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
+        AND a.is_deleted = FALSE
       GROUP BY 
         a.idappointment, 
         a.date, 
         CONCAT(d.firstname, ' ', d.lastname),
-        COALESCE(NULLIF(CONCAT(p.firstname, ' ', p.lastname), ' '), a.patient_name),
+        CASE
+          WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE THEN CONCAT(p.firstname, ' ', p.lastname)
+          ELSE a.patient_name
+        END,
         r.paymentstatus, 
         r.total_paid
       ORDER BY a.date DESC;
@@ -1942,7 +1961,6 @@ app.get('/api/website/payment', async (req, res) => {
       return res.status(404).json({ message: 'No payment records found' });
     }
 
-    // ✅ Return results with a message for clarity
     return res.status(200).json({
       message: 'Payment records fetched successfully',
       payments: result.rows
@@ -1959,6 +1977,7 @@ app.get('/api/website/payment', async (req, res) => {
     client.release();
   }
 });
+
 
 app.put('/api/website/payment/:id', async (req, res) => {
   const { id } = req.params;
@@ -2021,18 +2040,21 @@ app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
 
   try {
-    // ✅ Fetch all services linked to the given appointment
+    // Fetch all services linked to the given appointment, excluding soft-deleted entries
     const result = await pool.query(
       `SELECT s.idservice, s.name, s.price
        FROM appointment_services aps
        JOIN service s ON aps.idservice = s.idservice
-       WHERE aps.idappointment = $1`,
+       JOIN appointment a ON aps.idappointment = a.idappointment
+       WHERE aps.idappointment = $1
+         AND aps.is_deleted = FALSE
+         AND s.is_deleted = FALSE
+         AND a.is_deleted = FALSE`,
       [idappointment]
     );
 
     const services = result.rows; // contains idservice, name, and price
 
-    // ✅ Return the list of services for the appointment
     return res.json({ services });
   } catch (error) {
     console.error('Error fetching services for appointment:', error.message);
@@ -2312,43 +2334,39 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
 
     // 2️⃣ Parse undo_data
     const undoData = typeof log.undo_data === 'string' ? JSON.parse(log.undo_data) : log.undo_data;
-    if (!undoData?.data || !undoData?.primary_key) {
-      return res.status(400).json({ message: 'Undo data or primary key not available' });
+    if (!undoData) return res.status(400).json({ message: 'Undo data not available' });
+
+    // Handle nested undo data for composite actions
+    const actionsToUndo = Array.isArray(undoData) ? undoData : [undoData];
+
+    for (const action of actionsToUndo) {
+      const { primary_key, data } = action;
+      if (!primary_key || !data) continue; // skip invalid entries
+
+      if (log.action === 'EDIT') {
+        const fields = Object.keys(data);
+        const values = Object.values(data);
+        if (fields.length) {
+          const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+          const query = `UPDATE ${log.table_name} SET ${setClause}, updated_at = NOW() WHERE ${primary_key} = $${fields.length + 1}`;
+          await pool.query(query, [...values, log.record_id]);
+          console.log(`✅ Undo EDIT completed for ${log.table_name} record ${log.record_id}`);
+        }
+      } else if (log.action === 'DELETE') {
+        const query = `UPDATE ${log.table_name} SET is_deleted = FALSE, deleted_at = NULL, updated_at = NOW() WHERE ${primary_key} = $1`;
+        await pool.query(query, [log.record_id]);
+        console.log(`✅ Undo DELETE completed for ${log.table_name} record ${log.record_id}`);
+      } else if (log.action === 'ADD') {
+        const query = `UPDATE ${log.table_name} SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE ${primary_key} = $1`;
+        await pool.query(query, [data[primary_key]]);
+        console.log(`✅ Undo ADD (soft-delete) completed for ${log.table_name} record ${data[primary_key]}`);
+      }
     }
 
-    const primaryKey = undoData.primary_key;
-    console.log("🔍 Parsed undo_data:", undoData);
-
-    // 3️⃣ Undo actions
-    if (log.action === 'EDIT') {
-      const fields = Object.keys(undoData.data);
-      const values = Object.values(undoData.data);
-
-      if (!fields.length) return res.status(400).json({ message: 'Undo data is empty for EDIT action' });
-
-      const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
-      const query = `UPDATE ${log.table_name} SET ${setClause}, updated_at = NOW() WHERE ${primaryKey} = $${fields.length + 1}`;
-      await pool.query(query, [...values, log.record_id]);
-      console.log("✅ Undo EDIT completed");
-
-    } else if (log.action === 'DELETE') {
-      const query = `UPDATE ${log.table_name} SET is_deleted = FALSE, deleted_at = NULL, updated_at = NOW() WHERE ${primaryKey} = $1`;
-      await pool.query(query, [log.record_id]);
-      console.log("✅ Undo DELETE completed");
-
-    } else if (log.action === 'ADD') {
-      const query = `UPDATE ${log.table_name} SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE ${primaryKey} = $1`;
-      await pool.query(query, [undoData.data[primaryKey]]);
-      console.log("✅ Undo ADD (soft-delete) completed");
-
-    } else {
-      return res.status(400).json({ message: `Cannot undo action type: ${log.action}` });
-    }
-
-    // 4️⃣ Mark log as undone
+    // 3️⃣ Mark log as undone
     await pool.query(`UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`, [logId]);
 
-    // 5️⃣ Log undo action
+    // 4️⃣ Log undo action
     await logActivity(adminId || null, 'UNDO', log.table_name, log.record_id, `Undid ${log.action} activity log ID ${logId}`, null);
 
     return res.status(200).json({ message: 'Undo successful' });
@@ -2362,36 +2380,43 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
 app.get('/api/app/records', async (req, res) => {
   const query = `
     SELECT 
-      p.idusers AS idpatient, -- ✅ Patient ID
-      r.idrecord,             -- ✅ Record ID
-      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname, -- ✅ Full name of patient
-      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname, -- ✅ Full name of dentist
-      r.treatment_notes,      -- ✅ Notes about the treatment
-      r.paymentstatus,        -- ✅ Payment status (unpaid, partial, paid)
-      r.idappointment,        -- ✅ Associated appointment ID
-      a.date AS appointmentDate, -- ✅ Appointment date
+      p.idusers AS idpatient, -- Patient ID
+      r.idrecord,             -- Record ID
+      CONCAT(p.firstname, ' ', p.lastname) AS patientFullname, -- Full name of patient
+      CONCAT(d.firstname, ' ', d.lastname) AS dentistFullname, -- Full name of dentist
+      r.treatment_notes,      -- Notes about the treatment
+      r.paymentstatus,        -- Payment status (unpaid, partial, paid)
+      r.idappointment,        -- Associated appointment ID
+      a.date AS appointmentDate, -- Appointment date
       COALESCE(
         (
-          SELECT STRING_AGG(s.name, ', ') -- ✅ List of services for this appointment
+          SELECT STRING_AGG(s.name, ', ') -- List of services for this appointment
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
+            AND aps.is_deleted = FALSE
+            AND s.is_deleted = FALSE
         ), ''
       ) AS services,
       COALESCE(
         (
-          SELECT SUM(s.price) -- ✅ Total price of services for this appointment
+          SELECT SUM(s.price) -- Total price of services for this appointment
           FROM appointment_services aps
           JOIN service s ON aps.idservice = s.idservice
           WHERE aps.idappointment = r.idappointment
+            AND aps.is_deleted = FALSE
+            AND s.is_deleted = FALSE
         ), 0
       ) AS totalPrice
     FROM users p
-    LEFT JOIN records r ON r.idpatient = p.idusers    -- ✅ Join patient records
-    LEFT JOIN users d ON r.iddentist = d.idusers      -- ✅ Join dentist info
-    LEFT JOIN appointment a ON r.idappointment = a.idappointment -- ✅ Join appointment details
-    WHERE p.usertype = 'patient'                      -- ✅ Only fetch patient records
-    ORDER BY r.idrecord DESC NULLS LAST;             -- ✅ Latest records first
+    LEFT JOIN records r 
+      ON r.idpatient = p.idusers AND r.is_deleted = FALSE
+    LEFT JOIN users d 
+      ON r.iddentist = d.idusers AND d.is_deleted = FALSE
+    LEFT JOIN appointment a 
+      ON r.idappointment = a.idappointment AND a.is_deleted = FALSE
+    WHERE p.usertype = 'patient' AND p.is_deleted = FALSE
+    ORDER BY r.idrecord DESC NULLS LAST;
   `;
 
   try {
@@ -2401,13 +2426,13 @@ app.get('/api/app/records', async (req, res) => {
       return res.status(404).json({ message: 'No records found' });
     }
 
-    // ✅ Return all records in response
     return res.status(200).json({ records: result.rows });
   } catch (err) {
     console.error('Error fetching records:', err.message);
     return res.status(500).json({ message: 'Error fetching records', error: err.message });
   }
 });
+
  
 app.post('/api/app/users', async (req, res) => {
   const {
@@ -2588,7 +2613,7 @@ app.get('/api/app/appointments/search', async (req, res) => {
   const { dentist, patient, startDate, endDate } = req.query;
 
   // ✅ Prepare dynamic conditions for filtering
-  let conditions = [];
+  let conditions = ['is_deleted = FALSE']; // Always exclude soft-deleted appointments
   let values = [];
 
   // Filter by dentist ID if provided
@@ -2605,7 +2630,7 @@ app.get('/api/app/appointments/search', async (req, res) => {
 
   // Filter by date range if both start and end dates are provided
   if (startDate && endDate) {
-    conditions.push(`DATE(date) BETWEEN $${values.length + 1} AND $${values.length + 2}`);
+    conditions.push(`DATE(date AT TIME ZONE 'Asia/Manila') BETWEEN $${values.length + 1} AND $${values.length + 2}`);
     values.push(startDate, endDate);
   }
 
@@ -2618,6 +2643,10 @@ app.get('/api/app/appointments/search', async (req, res) => {
   try {
     const result = await pool.query(query, values);
 
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
+    }
+
     // ✅ Return filtered appointments
     return res.status(200).json({ appointments: result.rows });
   } catch (err) {
@@ -2626,25 +2655,28 @@ app.get('/api/app/appointments/search', async (req, res) => {
   }
 });
 
-// ✅ Get all dentists (users with usertype = 'dentist')
+
+// ✅ Get all active dentists (users with usertype = 'dentist')
 app.get('/api/app/dentists', async (req, res) => {
-  // Query to fetch users whose usertype is 'dentist'
-  const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'dentist'";
+  const query = `
+    SELECT idusers, firstname, lastname
+    FROM users
+    WHERE usertype = 'dentist'
+      AND is_deleted = FALSE
+    ORDER BY firstname, lastname
+  `;
 
   try {
     const result = await pool.query(query);
 
-    // Check if no dentists found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No dentists found' });
     }
 
-    // Return list of dentists
     return res.status(200).json({
       dentists: result.rows
     });
   } catch (err) {
-    // Log error and return 500 response
     console.error('Error fetching dentists:', err.message);
     return res.status(500).json({ message: 'Error fetching dentists', error: err.message });
   }
@@ -2800,40 +2832,46 @@ app.post('/api/app/records', async (req, res) => {
   }
 });
 
-// ✅ Get all users from the database
+// ✅ Get all active users from the database
 app.get('/api/app/users', async (req, res) => {
-  const query = 'SELECT * FROM users';
+  const query = `
+    SELECT *
+    FROM users
+    WHERE is_deleted = FALSE
+    ORDER BY firstname, lastname
+  `;
 
   try {
-    // Step 1: Execute query to fetch all users
     const result = await pool.query(query);
 
-    // Step 2: Check if no users found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No users found' });
     }
 
-    // Step 3: Format birthdate to YYYY-MM-DD for each user
+    // Format birthdate to YYYY-MM-DD
     const formattedRows = result.rows.map(user => ({
       ...user,
       birthdate: user.birthdate
-        ? new Date(user.birthdate).toISOString().split('T')[0]
+        ? user.birthdate.toISOString().split('T')[0]
         : null
     }));
 
-    // Step 4: Return users with formatted birthdates
-    return res.status(200).json({
-      records: formattedRows
-    });
+    return res.status(200).json({ records: formattedRows });
   } catch (err) {
     console.error('Error fetching users:', err.message);
     return res.status(500).json({ message: 'Error fetching users', error: err.message });
   }
 });
 
-// ✅ Get all users from the database (excluding soft-deleted ones)
+
+// ✅ Get all active users from the database
 app.get('/api/website/users', async (req, res) => {
-  const query = 'SELECT * FROM users WHERE is_deleted = FALSE';
+  const query = `
+    SELECT *
+    FROM users
+    WHERE is_deleted = FALSE
+    ORDER BY firstname, lastname
+  `;
 
   try {
     const result = await pool.query(query);
@@ -2842,21 +2880,19 @@ app.get('/api/website/users', async (req, res) => {
       return res.status(404).json({ message: 'No users found' });
     }
 
-    const formattedRows = result.rows.map(user => ({
+    // Format birthdate to YYYY-MM-DD
+    const users = result.rows.map(user => ({
       ...user,
-      birthdate: user.birthdate
-        ? new Date(user.birthdate).toISOString().split('T')[0]
-        : null
+      birthdate: user.birthdate ? user.birthdate.toISOString().split('T')[0] : null
     }));
 
-    return res.status(200).json({
-      records: formattedRows
-    });
+    return res.status(200).json({ records: users });
   } catch (err) {
     console.error('Error fetching users:', err.message);
     return res.status(500).json({ message: 'Error fetching users', error: err.message });
   }
 });
+
 
 // ✅ Update a specific record by idrecord
 app.put('/api/app/records/:idrecord', async (req, res) => {
@@ -2995,20 +3031,114 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   }
 });
 
-// ✅ Get all patients (users with usertype = 'patient')
+// ✅ Update a specific appointment (with undo-ready activity log)
+app.put('/api/website/appointments/:id', async (req, res) => {
+  const idappointment = req.params.id;
+  const { idpatient, iddentist, date, status, notes, idservice, patient_name, adminId } = req.body;
+
+  // Validate required fields
+  if (!iddentist || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
+    return res.status(400).json({ message: 'iddentist and idservice array are required.' });
+  }
+  if (!idpatient && !patient_name) {
+    return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
+  }
+
+  try {
+    // 1️⃣ Fetch existing appointment for undo
+    const existingResult = await pool.query(
+      'SELECT * FROM appointment WHERE idappointment = $1',
+      [idappointment]
+    );
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Appointment not found' });
+    }
+    const existingAppointment = existingResult.rows[0];
+
+    // Fetch existing services
+    const existingServicesResult = await pool.query(
+      'SELECT idservice FROM appointment_services WHERE idappointment = $1',
+      [idappointment]
+    );
+    const existingServiceIds = existingServicesResult.rows.map(r => r.idservice);
+
+    // 2️⃣ Update appointment
+    let updateQuery, queryParams;
+    if (idpatient) {
+      updateQuery = `
+        UPDATE appointment
+        SET idpatient = $1, iddentist = $2, date = $3, status = $4, notes = $5, patient_name = NULL, updated_at = NOW()
+        WHERE idappointment = $6
+        RETURNING *
+      `;
+      queryParams = [idpatient, iddentist, date || existingAppointment.date, status || 'pending', notes || '', idappointment];
+    } else {
+      updateQuery = `
+        UPDATE appointment
+        SET idpatient = NULL, iddentist = $1, date = $2, status = $3, notes = $4, patient_name = $5, updated_at = NOW()
+        WHERE idappointment = $6
+        RETURNING *
+      `;
+      queryParams = [iddentist, date || existingAppointment.date, status || 'pending', notes || '', patient_name, idappointment];
+    }
+
+    const updatedResult = await pool.query(updateQuery, queryParams);
+    const updatedAppointment = updatedResult.rows[0];
+
+    // 3️⃣ Replace services
+    await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
+    const insertPromises = idservice.map(sid =>
+      pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, sid])
+    );
+    await Promise.all(insertPromises);
+
+    // 4️⃣ Log single activity for undo
+    if (adminId) {
+      await logActivity(
+        adminId,
+        'EDIT',
+        'appointment',
+        idappointment,
+        `Updated appointment ID ${idappointment} for dentist ID ${iddentist} (services replaced)`,
+        {
+          primary_key: 'idappointment',
+          data: {
+            oldAppointment: existingAppointment,
+            oldServices: existingServiceIds
+          }
+        }
+      );
+    }
+
+    return res.json({
+      message: 'Appointment updated successfully',
+      appointment: updatedAppointment,
+      servicesUpdated: idservice
+    });
+
+  } catch (error) {
+    console.error('Error updating appointment:', error.message);
+    return res.status(500).json({ message: 'Error updating appointment', error: error.message });
+  }
+});
+
+// ✅ Get all active patients (users with usertype = 'patient')
 app.get('/api/app/patients', async (req, res) => {
-  // Query only users with usertype 'patient'
-  const query = "SELECT idUsers, firstname, lastname FROM users WHERE usertype = 'patient'";
+  const query = `
+    SELECT idusers, firstname, lastname
+    FROM users
+    WHERE usertype = 'patient'
+      AND is_deleted = FALSE
+    ORDER BY firstname, lastname
+  `;
 
   try {
     const result = await pool.query(query);
 
-    // Return 404 if no patients found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No patients found' });
     }
 
-    // Return list of patients
     return res.status(200).json({
       patients: result.rows
     });
@@ -3018,35 +3148,26 @@ app.get('/api/app/patients', async (req, res) => {
   }
 });
 
+// ✅ Get all appointments, sorted by date ascending
 app.get('/api/app/appointments', async (req, res) => {
-  // Query to fetch all appointments, sorted by date (ascending) and then by idappointment
-  const fetchQuery = 'SELECT * FROM appointment ORDER BY date ASC, idappointment ASC';
-
-  const client = await pool.connect();
+  const fetchQuery = `
+    SELECT *
+    FROM appointment
+    WHERE is_deleted = FALSE
+    ORDER BY date ASC, idappointment ASC
+  `;
 
   try {
-    await client.query('BEGIN'); // Start a transaction
+    const result = await pool.query(fetchQuery);
 
-    // Execute the query to fetch appointments
-    const result = await client.query(fetchQuery);
-
-    await client.query('COMMIT'); // Commit the transaction
-
-    // Return 404 if no appointments found
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'No appointments found' });
     }
 
-    // Send the sorted appointments back in the response
-    return res.status(200).json({
-      appointments: result.rows
-    });
+    return res.status(200).json({ appointments: result.rows });
   } catch (err) {
-    await client.query('ROLLBACK'); // Rollback transaction in case of error
     console.error('Error fetching appointments:', err.message);
     return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
-  } finally {
-    client.release(); // Release the client back to the pool
   }
 });
 
@@ -3185,15 +3306,15 @@ app.post('/api/app/logout', async (req, res) => {
   return res.status(200).json({ message: 'Logged out successfully' });
 });
 
-// Get profile route
+// Get profile route (excluding soft-deleted users)
 app.get('/api/app/profile', authenticateToken, async (req, res) => {
   try {
-    // Fetch user based on authenticated userId
-    const getQuery = 'SELECT * FROM users WHERE idusers = $1';
+    // Fetch user based on authenticated userId and is not soft-deleted
+    const getQuery = 'SELECT * FROM users WHERE idusers = $1 AND is_deleted = FALSE';
     const result = await pool.query(getQuery, [req.userId]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({ message: "User not found or has been deleted" });
     }
 
     const user = result.rows[0];
@@ -3219,6 +3340,7 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
     return res.status(500).json({ message: 'Error retrieving profile' });
   }
 });
+
 
 // Update profile route
 app.post('/api/app/profile', authenticateToken, async (req, res) => {
@@ -3344,10 +3466,10 @@ await logActivity(
   }
 });
 
-// Get all services route
+// Get all services route (excluding soft-deleted ones)
 app.get('/api/app/services', async (req, res) => {
-  // SQL query to select all services from the 'service' table
-  const query = 'SELECT * FROM service';
+  // SQL query to select all services that are not soft-deleted
+  const query = 'SELECT * FROM service WHERE is_deleted = FALSE';
 
   try {
     // Execute the query
@@ -3701,6 +3823,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
