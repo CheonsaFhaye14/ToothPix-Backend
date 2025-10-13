@@ -1071,20 +1071,32 @@ app.post('/api/website/appointments', async (req, res) => {
 
     // 3️⃣ Log a single activity with all undo data
     if (adminId) {
-      await logActivity(
-        adminId,
-        'ADD',
-        'appointment',
-        appointment.idappointment,
-        `Created a new appointment (ID: ${appointment.idappointment}) for dentist ID ${iddentist} with ${serviceIds.length} services`,
-        { 
-          primary_key: 'idappointment',
-          data: {
-            appointment: appointment,
-            services: serviceIds
-          }
-        }
-      );
+     await logActivity(
+  adminId,
+  'ADD',
+  'appointment',
+  appointment.idappointment,
+  `Created a new appointment (ID: ${appointment.idappointment}) for dentist ID ${iddentist} with ${serviceIds.length} services`,
+  { 
+    primary_key: 'idappointment',
+    table: 'appointment',
+    data: {
+      appointment: {
+        idappointment: appointment.idappointment,
+        iddentist: appointment.iddentist,
+        status: appointment.status,
+        appointment_date: appointment.date,
+        notes: appointment.notes,
+        idpatient: appointment.idpatient,
+        patient_name: appointment.patient_name
+      },
+      appointment_services: insertedServices.map(s => ({
+        idappointment: appointment.idappointment,
+        idservice: s.rows[0].idservice
+      }))
+    }
+  }
+);
     }
 
     // 4️⃣ Send notifications
@@ -1819,27 +1831,38 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
       [appointmentId]
     );
 
-    // 3️⃣ Log admin activity (undo-ready)
-    if (adminId) {
-      try {
-        const undoData = { 
-          primary_key: 'idappointment', 
-          data: { idappointment: appointmentId } // minimal info for undo
-        };
+   // 3️⃣ Log admin activity (undo-ready)
+if (adminId) {
+  try {
+    const undoData = { 
+      primary_key: 'idappointment',
+      table: 'appointment',
+     data: {
+  idappointment: appointment.idappointment,
+  iddentist: appointment.iddentist,
+  idpatient: appointment.idpatient,
+  status: appointment.status,
+  notes: appointment.notes,
+  appointment_date: appointment.date,
+  is_deleted: true,
+  deleted_at: new Date().toISOString()
+}
+    };
 
-        await logActivity(
-          adminId,
-          'DELETE',
-          'appointment',
-          appointmentId,
-          `Soft-deleted appointment ID ${appointmentId}`,
-          undoData // pass object directly
-        );
-        console.log("🪵 Activity logged successfully for appointment soft-delete.");
-      } catch (logErr) {
-        console.error("❌ Error logging activity:", logErr.message);
-      }
-    } else {
+    await logActivity(
+      adminId,
+      'DELETE',
+      'appointment',
+      appointmentId,
+      `Soft-deleted appointment ID ${appointmentId}`,
+      undoData
+    );
+    console.log("🪵 Activity logged successfully for appointment soft-delete.");
+  } catch (logErr) {
+    console.error("❌ Error logging activity:", logErr.message);
+  }
+}
+ else {
       console.warn("⚠️ No adminId provided; activity log skipped");
     }
 
@@ -2297,7 +2320,12 @@ const changedFields = [];
     changedFields.push(field);
   }
 });
-
+    
+// 🛑 If no changes, skip logging and return early
+if (changedFields.length === 0) {
+  console.log("⚠️ No visible changes — skipping activity log");
+  return res.status(200).json({ message: 'No changes detected', user: updatedUser });
+}
 const description = changedFields.length > 0
   ? `Updated user ${firstname} ${lastname} (${changedFields.join(', ')})`
   : `Updated user ${firstname} ${lastname} (no visible changes)`;
@@ -2305,10 +2333,11 @@ const description = changedFields.length > 0
 // 7️⃣ Log activity with proper undo_data structure
 try {
   console.log("🪵 Logging activity...");
-  await logActivity(adminId, 'EDIT', 'users', userId, description, {
-    primary_key: 'idusers',  // optional but recommended
-    data: changes,           // wrap changes in 'data'
-  });
+ await logActivity(adminId, 'EDIT', 'users', userId, description, {
+  primary_key: 'idusers',
+  table: 'users',     // optional but keeps logs uniform
+  data: changes
+});
   console.log("✅ Activity logged successfully for user ID:", userId);
 } catch (err) {
   console.error('❌ Error logging activity:', err.message);
@@ -2323,7 +2352,6 @@ return res.status(200).json({ message: 'User updated successfully', user: update
   }
 });
 
-// ✅ Unified Undo Route — Supports ADD, DELETE, single-table EDIT, and multi-table EDIT (appointment + appointment_services)
 app.post('/api/activity_logs/undo/:logId', async (req, res) => {
   const logId = req.params.logId;
   const adminId = req.body.admin_id;
@@ -2336,9 +2364,11 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     if (!logResult.rows.length) {
       return res.status(404).json({ message: 'Activity log not found' });
     }
+
     const log = logResult.rows[0];
     console.log("✅ Activity log fetched:", log);
 
+    // Prevent invalid undo operations
     if (log.is_undone) return res.status(400).json({ message: 'This action has already been undone' });
     if (log.action === 'UNDO') return res.status(400).json({ message: 'Cannot undo an UNDO action' });
 
@@ -2348,13 +2378,12 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
 
     console.log("📦 Parsed undo data:", undoData);
 
-    // Helper function — restore old data
+    // 🔧 Helper function to restore table data
     const restoreTableData = async (tableName, primaryKey, oldData) => {
       if (!oldData) return;
 
       if (Array.isArray(oldData)) {
         console.log(`🔁 Restoring multiple rows in ${tableName}...`);
-        // Delete current related rows before re-inserting old ones
         await pool.query(`DELETE FROM ${tableName} WHERE ${primaryKey} = $1`, [oldData[0][primaryKey]]);
 
         for (const row of oldData) {
@@ -2376,43 +2405,109 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       }
     };
 
-    // 3️⃣ Perform undo depending on action and structure
+    // 3️⃣ Perform undo depending on action
     if (log.action === 'EDIT') {
-      // 🧩 Multi-table edit undo (appointment + appointment_services)
+      console.log("✏️ Undoing EDIT (restoring previous data)...");
+
+      // 🧩 Multi-table (appointment + appointment_services)
       if (undoData.data && undoData.data.appointment && undoData.data.appointment_services) {
         console.log("🧩 Performing multi-table undo for appointment + services...");
-        await restoreTableData('appointment', 'idappointment', undoData.data.appointment);
-        await restoreTableData('appointment_services', 'idappointment', undoData.data.appointment_services);
+
+        const appointmentData = undoData.data.appointment;
+        const appointmentServicesData = undoData.data.appointment_services;
+
+        // --- Appointment table update ---
+        const appFields = Object.keys(appointmentData);
+        const appValues = Object.values(appointmentData);
+        const setClause = appFields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+        const updateQuery = `UPDATE appointment SET ${setClause}, updated_at = NOW() WHERE ${undoData.primary_key} = $${appFields.length + 1}`;
+        await pool.query(updateQuery, [...appValues, appointmentData[undoData.primary_key]]);
+        console.log(`✅ Appointment table reverted for ID ${appointmentData[undoData.primary_key]}`);
+
+        // --- Appointment_services table update ---
+        await pool.query(`DELETE FROM appointment_services WHERE ${undoData.primary_key} = $1`, [appointmentData[undoData.primary_key]]);
+        console.log("🧹 Cleared existing services for appointment", appointmentData[undoData.primary_key]);
+
+        for (const serviceRow of appointmentServicesData) {
+          const fields = Object.keys(serviceRow);
+          const values = Object.values(serviceRow);
+          const placeholders = fields.map((_, idx) => `$${idx + 1}`).join(', ');
+          const insertQuery = `INSERT INTO appointment_services (${fields.join(', ')}) VALUES (${placeholders})`;
+          await pool.query(insertQuery, values);
+        }
+        console.log(`✅ Reinserted ${appointmentServicesData.length} services for appointment ${appointmentData[undoData.primary_key]}`);
+
+      // 🧱 Single-table edit
       } else if (undoData.table && undoData.data) {
-        // 🧱 Single-table edit undo
         console.log("🧱 Performing single-table undo...");
-        await restoreTableData(undoData.table, undoData.primary_key || 'id', undoData.data);
+        const record = undoData.data;
+        const fields = Object.keys(record);
+        const values = Object.values(record);
+        const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+        const query = `UPDATE ${undoData.table} SET ${setClause}, updated_at = NOW() WHERE ${undoData.primary_key} = $${fields.length + 1}`;
+        await pool.query(query, [...values, record[undoData.primary_key]]);
+        console.log(`✅ Restored record in ${undoData.table} to match undo data`);
       } else {
         console.warn("⚠️ Unknown undoData format for EDIT action. Skipping...");
       }
 
     } else if (log.action === 'DELETE') {
-      // 🟥 Undo soft-delete → restore record
-      console.log("♻️ Undoing DELETE (restoring record)...");
-      const query = `UPDATE ${log.table_name} SET is_deleted = FALSE, deleted_at = NULL, updated_at = NOW() WHERE ${undoData.primary_key} = $1`;
-      await pool.query(query, [log.record_id]);
-      console.log(`✅ Undo DELETE completed for ${log.table_name} record ${log.record_id}`);
+      console.log("♻️ Undoing DELETE (restoring soft-deleted record)...");
+
+      const tableName = undoData.table;
+      const primaryKey = undoData.primary_key;
+      const data = undoData.data;
+
+      if (!tableName || !primaryKey || !data) {
+        return res.status(400).json({ message: 'Incomplete undo data for DELETE action' });
+      }
+
+      const recordId = data[primaryKey];
+      if (!recordId) {
+        return res.status(400).json({ message: 'Missing primary key value in undo data' });
+      }
+
+      // 🧠 Restore record by flipping deletion flags
+      const query = `
+        UPDATE ${tableName}
+        SET is_deleted = FALSE,
+            deleted_at = NULL,
+            updated_at = NOW()
+        WHERE ${primaryKey} = $1
+      `;
+      await pool.query(query, [recordId]);
+      console.log(`✅ Record ${recordId} in ${tableName} restored (is_deleted = FALSE)`);
 
     } else if (log.action === 'ADD') {
-      // 🗑️ Undo add → soft-delete newly added record
       console.log("🗑️ Undoing ADD (soft-deleting new record)...");
-      const query = `UPDATE ${log.table_name} SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE ${undoData.primary_key} = $1`;
-      await pool.query(query, [log.record_id]);
-      console.log(`✅ Undo ADD completed for ${log.table_name} record ${log.record_id}`);
+      const tableName = undoData.table || log.table_name;
+      const primaryKey = undoData.primary_key || 'id';
+      const data = undoData.data;
+      const recordId = log.record_id || data?.[primaryKey];
+
+      if (!recordId) {
+        return res.status(400).json({ message: 'Missing record ID for undoing ADD' });
+      }
+
+      const query = `
+        UPDATE ${tableName}
+        SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW()
+        WHERE ${primaryKey} = $1
+      `;
+      await pool.query(query, [recordId]);
+      console.log(`✅ Undo ADD completed for ${tableName} record ${recordId}`);
 
     } else {
       console.warn(`⚠️ Unknown action type (${log.action}). No undo performed.`);
     }
 
     // 4️⃣ Mark as undone
-    await pool.query(`UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`, [logId]);
+    await pool.query(
+      `UPDATE activity_logs SET is_undone = TRUE, undone_at = NOW() WHERE id = $1`,
+      [logId]
+    );
 
-    // 5️⃣ Log this undo
+    // 5️⃣ Log this undo action
     await logActivity(
       adminId || null,
       'UNDO',
@@ -2630,17 +2725,24 @@ app.post('/api/website/users', async (req, res) => {
     // 🧾 Log admin activity
     try {
       console.log("🪵 Logging admin activity...");
-     await logActivity(
+   await logActivity(
   adminId || null,
   'ADD',
   'users',
   newUser.idusers,
   `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
   {
-    primary_key: "idusers",      // still correct for this table
-    data: { [ "idusers" ]: newUser.idusers } // dynamically set key
+    primary_key: 'idusers',
+    table: 'users', // ✅ add table name for uniformity
+    data: {
+      idusers: newUser.idusers,
+      username: newUser.username,
+      email: newUser.email,
+      usertype: newUser.usertype
+    }
   }
 );
+
       console.log("✅ Activity logged successfully");
     } catch (logError) {
       console.error("❌ Error logging admin activity:", logError);
@@ -3158,8 +3260,27 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       ];
     }
 
-    const updatedResult = await pool.query(updateQuery, queryParams);
-    const updatedAppointment = updatedResult.rows[0];
+const updatedResult = await pool.query(updateQuery, queryParams);
+const updatedAppointment = updatedResult.rows[0];
+
+// 🧠 Check if anything actually changed (both appointment fields & services)
+const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name'];
+
+// Check if any of these editable fields changed
+const changed = compareFields.some(f => 
+  existingAppointment[f]?.toString() !== updatedAppointment[f]?.toString()
+);
+
+// Compare services (ignores order)
+const sameServices =
+  JSON.stringify(existingServices.map(s => s.idservice).sort()) ===
+  JSON.stringify(idservice.sort());
+
+if (!changed && sameServices) {
+  console.log("⚠️ No visible changes detected — skipping activity log");
+  return res.status(200).json({ message: 'No visible changes detected' });
+}
+
 
     // 5️⃣ Replace services (delete then insert new ones)
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
@@ -3511,9 +3632,18 @@ await logActivity(
   'service',
   service.idservice,
   `Added new service: ${service.name} (${service.category})`,
-  { primary_key: primaryKey, data: { [primaryKey]: service.idservice } }
+  {
+    primary_key: 'idservice',
+    table: 'service',
+    data: {
+      idservice: service.idservice,
+      name: service.name,
+      description: service.description,
+      price: service.price,
+      category: service.category
+    }
+  }
 );
-      
       console.log('✅ Activity logged successfully for service ID:', service.idservice);
     } catch (logError) {
       console.error('❌ Error logging admin activity:', logError);
@@ -3636,87 +3766,85 @@ app.get('/api/website/services', async (req, res) => {
   }
 });
 
+// Route to update an existing service
 app.put('/api/website/services/:id', async (req, res) => {
   const serviceId = req.params.id;
-  const adminId = req.body.admin_id; // Optional: get admin ID from request or JWT
+  const adminId = req.body.admin_id;
   const { name, description, price } = req.body;
 
   // ✅ Validate name
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    console.warn('❌ Name validation failed');
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
 
   // ✅ Validate price
   if (price === undefined || isNaN(price)) {
-    console.warn('❌ Price validation failed');
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
   try {
-    // 1️⃣ Fetch existing service for undo logging
+    // 1️⃣ Fetch existing service
     const serviceResult = await pool.query(
       'SELECT * FROM service WHERE idservice = $1 AND is_deleted = FALSE',
       [serviceId]
     );
     if (serviceResult.rows.length === 0) {
-      console.warn('⚠️ Service not found or already deleted:', serviceId);
       return res.status(404).json({ message: 'Service not found' });
     }
 
     const existingService = serviceResult.rows[0];
-    console.log('🔍 Existing service fetched:', existingService);
 
     // 2️⃣ Update service
     const updateQuery = `
       UPDATE service
-      SET name = $1,
-          description = $2,
-          price = $3,
-          updated_at = NOW()
+      SET name = $1, description = $2, price = $3, updated_at = NOW()
       WHERE idservice = $4
       RETURNING idservice, name, description, price, category
     `;
-    const values = [name.trim(), description || null, parseFloat(price), serviceId];
-    const updateResult = await pool.query(updateQuery, values);
-    const updatedService = updateResult.rows[0];
-    console.log('✅ Service updated:', updatedService);
+    const updateResult = await pool.query(updateQuery, [
+      name.trim(),
+      description || null,
+      parseFloat(price),
+      serviceId
+    ]);
 
-    // 3️⃣ Prepare undo data
+    const updatedService = updateResult.rows[0];
+
+    // 3️⃣ Compare fields for changes
     const changes = {};
     ['name', 'description', 'price'].forEach(field => {
       if (existingService[field]?.toString() !== updatedService[field]?.toString()) {
-        changes[field] = existingService[field]; // old value for undo
+        changes[field] = existingService[field]; // store old value for undo
       }
     });
 
-   // 4️⃣ Log activity
-try {
-  if (Object.keys(changes).length > 0) {
-    const undoData = {
-      primary_key: 'idservice',
-      data: changes
-    };
+    // 4️⃣ Log activity if there were changes
+    try {
+      if (Object.keys(changes).length > 0) {
+        const undoData = {
+          primary_key: 'idservice',
+          table: 'service',
+          data: changes
+        };
 
-   await logActivity(
-  adminId || null,
-  'EDIT',
-  'service',
-  serviceId,
-  `Updated service ${existingService.name} (fields: ${Object.keys(changes).join(', ')})`,
-  { primary_key: 'idservice', data: changes } // changes = old values for undo
-);
+        await logActivity(
+          adminId || null,
+          'EDIT',
+          'service',
+          serviceId,
+          `Updated service ${existingService.name} (fields: ${Object.keys(changes).join(', ')})`,
+          undoData
+        );
 
-    console.log('🪵 Activity logged successfully for service update.');
-  } else {
-    console.log('⚠️ No changes detected, skipping activity log.');
-  }
-} catch (logErr) {
-  console.error('❌ Error logging activity:', logErr.message);
-}
+        console.log('🪵 Activity logged successfully for service update.');
+      } else {
+        console.log('⚠️ No changes detected, skipping activity log.');
+      }
+    } catch (logErr) {
+      console.error('❌ Error logging activity:', logErr.message);
+    }
 
-
-    // 5️⃣ Return success response
+    // ✅ Return response
     return res.status(200).json({
       message: 'Service updated successfully',
       service: updatedService
@@ -3766,10 +3894,16 @@ app.delete('/api/website/services/:id', async (req, res) => {
   'service',
   serviceId,
   `Deleted service ${existingService.name}`,
-  { primary_key: 'idservice', data: { idservice: serviceId } } // only what is needed for undo
+  {
+    primary_key: 'idservice',
+    table: 'service',
+    data: {
+      ...existingService,
+      is_deleted: true,
+      deleted_at: new Date().toISOString()
+    }
+  }
 );
-
-
     return res.status(200).json({
       message: 'Service soft-deleted successfully',
       service: result.rows[0]
@@ -3792,7 +3926,7 @@ app.delete('/api/website/users/:id', async (req, res) => {
   const adminId = req.userId; // From auth middleware
 
   try {
-    // Get existing user data before deleting
+    // 1️⃣ Get existing user data before deleting
     const existingUserResult = await pool.query(
       `SELECT * FROM users WHERE idusers = $1 AND is_deleted = FALSE`,
       [userId]
@@ -3804,37 +3938,43 @@ app.delete('/api/website/users/:id', async (req, res) => {
 
     const existingUser = existingUserResult.rows[0];
 
-    // Soft delete the user
+    // 2️⃣ Soft delete the user
     const result = await pool.query(
       `UPDATE users
        SET is_deleted = TRUE,
-           deleted_at = NOW()
+           deleted_at = NOW(),
+           updated_at = NOW()
        WHERE idusers = $1
        RETURNING *`,
       [userId]
     );
 
-    // Log activity with undo data (only store data needed to restore)
-await logActivity(
-  adminId,
-  'DELETE',
-  'users',
-  userId,
-  `Deleted user ${existingUser.firstname} ${existingUser.lastname}`,
-  {
-    primary_key: 'idusers',          // specifies which column to use in undo
-    data: { idusers: userId }        // minimal data needed to undo
-  }
-);
+    // 3️⃣ Log activity (with undo-ready data)
+    await logActivity(
+      adminId,
+      'DELETE',
+      'users',
+      userId,
+      `Deleted user ${existingUser.firstname} ${existingUser.lastname}`,
+      {
+        primary_key: 'idusers',
+        table: 'users',
+        data: {
+          ...existingUser,
+          is_deleted: true,
+          deleted_at: new Date().toISOString()
+        }
+      }
+    );
 
-
+    // 4️⃣ Respond to client
     return res.status(200).json({
       message: 'User soft-deleted successfully',
       user: result.rows[0]
     });
 
   } catch (err) {
-    console.error('Error deleting user:', err.message);
+    console.error('💥 Error deleting user:', err.message);
     return res.status(500).json({ message: 'Error deleting user', error: err.message });
   }
 });
@@ -3948,6 +4088,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
