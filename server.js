@@ -2311,15 +2311,17 @@ app.put('/api/website/users/:id', async (req, res) => {
       return res.status(500).json({ message: 'Database error updating user', error: err.message });
     }
 
- // 6️⃣ Prepare undo changes
-const changes = {};
+// 6️⃣ Prepare undo changes
+const changes = { idusers: existingUser.idusers }; // include primary key
 const changedFields = [];
+
 ['username','email','usertype','firstname','lastname','birthdate','contact','address','gender','allergies','medicalhistory'].forEach(field => {
   if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
     changes[field] = existingUser[field]; // old value for undo
     changedFields.push(field);
   }
 });
+
     
 // 🛑 If no changes, skip logging and return early
 if (changedFields.length === 0) {
@@ -3810,13 +3812,15 @@ app.put('/api/website/services/:id', async (req, res) => {
 
     const updatedService = updateResult.rows[0];
 
-    // 3️⃣ Compare fields for changes
-    const changes = {};
-    ['name', 'description', 'price'].forEach(field => {
-      if (existingService[field]?.toString() !== updatedService[field]?.toString()) {
-        changes[field] = existingService[field]; // store old value for undo
-      }
-    });
+   // 3️⃣ Compare fields for changes
+const changes = { idservice: existingService.idservice }; // <-- include PK
+
+['name', 'description', 'price'].forEach(field => {
+  if (existingService[field]?.toString() !== updatedService[field]?.toString()) {
+    changes[field] = existingService[field]; // old value for undo
+  }
+});
+
 
     // 4️⃣ Log activity if there were changes
     try {
@@ -4088,6 +4092,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
