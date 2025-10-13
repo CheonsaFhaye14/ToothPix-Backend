@@ -1263,35 +1263,35 @@ cron.schedule('*/5 * * * *', async () => {
   try {
     await client.query('BEGIN'); // Start transaction
 
-    // 1. Get all appointments that are in the past and not yet completed or cancelled
+    // 1️⃣ Get all past appointments that are not completed or cancelled
     const res = await client.query(`
-      SELECT idappointment, idpatient, iddentist
+      SELECT idappointment
       FROM appointment
-      WHERE date < NOW()
+      WHERE appointment_date < NOW()
         AND status NOT IN ('cancelled', 'completed')
     `);
 
     const appointmentsToComplete = res.rows;
 
     if (appointmentsToComplete.length === 0) {
-      console.log('No appointments to update.'); // Nothing to process
-      await client.query('COMMIT'); // Commit empty transaction
+      console.log('No appointments to update.');
+      await client.query('COMMIT');
       return;
     }
 
-    // 2. Update these appointments to 'completed'
+    // 2️⃣ Update appointment statuses to 'completed'
     const idsToUpdate = appointmentsToComplete.map(a => a.idappointment);
     await client.query(
-      `UPDATE appointment SET status = 'completed' WHERE idappointment = ANY($1::int[])`,
+      `UPDATE appointment SET status = 'completed', updated_at = NOW() WHERE idappointment = ANY($1::int[])`,
       [idsToUpdate]
     );
     console.log(`Updated ${idsToUpdate.length} appointments to completed.`);
 
-    // 3. Insert records for these appointments if they don't already exist
+    // 3️⃣ Insert records for these appointments if they don't exist
     for (const appt of appointmentsToComplete) {
-      const { idappointment, idpatient, iddentist } = appt;
+      const { idappointment } = appt;
 
-      // Check if a record already exists
+      // Check if record already exists
       const existing = await client.query(
         `SELECT 1 FROM records WHERE idappointment = $1 LIMIT 1`,
         [idappointment]
@@ -1299,9 +1299,9 @@ cron.schedule('*/5 * * * *', async () => {
 
       if (existing.rowCount === 0) {
         await client.query(
-          `INSERT INTO records (idappointment, idpatient, iddentist, paymentstatus, total_paid)
-           VALUES ($1, $2, $3, 'unpaid', 0)`,
-          [idappointment, idpatient, iddentist]
+          `INSERT INTO records (idappointment, paymentstatus, total_paid)
+           VALUES ($1, 'unpaid', 0)`,
+          [idappointment]
         );
         console.log(`Inserted record for appointment ID ${idappointment}`);
       } else {
@@ -1309,13 +1309,13 @@ cron.schedule('*/5 * * * *', async () => {
       }
     }
 
-    await client.query('COMMIT'); // Commit all changes
+    await client.query('COMMIT');
     console.log('Appointment statuses and records updated successfully.');
   } catch (err) {
-    await client.query('ROLLBACK'); // Undo changes if error occurs
+    await client.query('ROLLBACK');
     console.error('Scheduled update failed:', err.message);
   } finally {
-    client.release(); // Release DB connection
+    client.release();
   }
 });
 
@@ -1370,64 +1370,101 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
 
 app.post('/api/website/record', async (req, res) => {
   const { idpatient, patient_name, iddentist, date, services, treatment_notes } = req.body;
+  const adminId = req.body.adminId || null; // optional for logging
 
-  // Validate required fields
+  console.log('📥 Incoming request to create appointment record:', req.body);
+
+  // 0️⃣ Validate required fields
   if (!iddentist || !date || !Array.isArray(services) || services.length === 0) {
+    console.warn('⚠️ Missing or invalid dentist, date, or services.');
     return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
   }
   if (!idpatient && !patient_name) {
+    console.warn('⚠️ Either idpatient or patient_name is required.');
     return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
   }
 
+  const client = await pool.connect();
   try {
-    await pool.query('BEGIN');
+    console.log('🔄 Starting transaction...');
+    await client.query('BEGIN');
 
     // 1️⃣ Insert appointment with status = 'completed'
+    console.log('📝 Preparing appointment insert query...');
     let insertAppointmentQuery, insertParams;
 
     if (idpatient) {
-      // For registered patients
+      // Registered patient
       insertAppointmentQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name, status)
         VALUES ($1, $2, $3, $4, NULL, 'completed')
         RETURNING idappointment
       `;
       insertParams = [idpatient, iddentist, date, ''];
+      console.log('👤 Registered patient insert params:', insertParams);
     } else {
-      // For walk-in patients
+      // Walk-in patient
       insertAppointmentQuery = `
         INSERT INTO appointment (idpatient, iddentist, date, notes, patient_name, status)
         VALUES (NULL, $1, $2, $3, $4, 'completed')
         RETURNING idappointment
       `;
       insertParams = [iddentist, date, '', patient_name];
+      console.log('🚶 Walk-in patient insert params:', insertParams);
     }
 
-    const apptResult = await pool.query(insertAppointmentQuery, insertParams);
+    const apptResult = await client.query(insertAppointmentQuery, insertParams);
     const idappointment = apptResult.rows[0].idappointment;
+    console.log(`✅ Appointment created with ID: ${idappointment}`);
 
     // 2️⃣ Insert appointment services
+    console.log('🛠️ Inserting appointment services...');
     for (const idservice of services) {
-      await pool.query(
+      console.log(`➕ Adding service ID ${idservice} to appointment ID ${idappointment}`);
+      await client.query(
         `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`,
         [idappointment, idservice]
       );
     }
+    console.log('✅ All services inserted.');
 
     // 3️⃣ Insert record (even if treatment_notes is empty)
-    const apptDetails = await pool.query(
-      `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
-      [idappointment]
+    console.log('📝 Inserting record for appointment...');
+    await client.query(
+      `INSERT INTO records (idappointment, treatment_notes, paymentstatus, total_paid)
+       VALUES ($1, $2, 'unpaid', 0)`,
+      [idappointment, treatment_notes?.trim() || '']
     );
-    const { idpatient: patientIdFromAppt, iddentist: dentistIdFromAppt } = apptDetails.rows[0];
+    console.log('✅ Record inserted for appointment.');
 
-    await pool.query(
-      `INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes, paymentstatus, total_paid)
-       VALUES ($1, $2, $3, $4, 'unpaid', 0)`,
-      [patientIdFromAppt, dentistIdFromAppt, idappointment, treatment_notes?.trim() || '']
-    );
+    // 4️⃣ Log activity for ADD (appointment only)
+    if (adminId) {
+      console.log('🪵 Logging activity for appointment ADD...');
+      const logData = {
+        primary_key: 'idappointment',
+        table: 'appointment',
+        data: {
+          idappointment,
+          iddentist,
+          status: 'completed'
+        }
+      };
 
-    await pool.query('COMMIT');
+      await logActivity(
+        adminId,
+        'ADD',
+        'appointment',
+        idappointment,
+        `Added new appointment ID ${idappointment}`,
+        logData
+      );
+      console.log(`✅ Activity logged successfully for appointment ID ${idappointment}`);
+    } else {
+      console.warn('⚠️ No adminId provided; skipping activity log.');
+    }
+
+    console.log('🔄 Committing transaction...');
+    await client.query('COMMIT');
 
     return res.status(201).json({ 
       message: 'Appointment and record created successfully.', 
@@ -1435,12 +1472,15 @@ app.post('/api/website/record', async (req, res) => {
     });
 
   } catch (error) {
-    await pool.query('ROLLBACK');
-    console.error('Error creating appointment and record:', error.message);
+    console.error('💥 Error creating appointment and record. Rolling back transaction...', error);
+    await client.query('ROLLBACK');
     return res.status(500).json({ 
       message: 'Failed to create appointment and record.', 
       error: error.message 
     });
+  } finally {
+    client.release();
+    console.log('🔚 Database connection released.');
   }
 });
 
@@ -1882,58 +1922,75 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
 
 app.get('/api/website/record', async (req, res) => {
   const query = `
-WITH appointment_info AS (
-  SELECT
-    a.idappointment,
-    a.date,
-    -- Use patient full name if exists and not deleted; otherwise fallback to appointment's patient_name
-    CASE 
-      WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE THEN CONCAT(p.firstname, ' ', p.lastname)
-      ELSE a.patient_name
-    END AS patient_name,
-    CONCAT(d.firstname, ' ', d.lastname) AS dentist_name
-  FROM appointment a
-  LEFT JOIN users p ON a.idpatient = p.idusers
-  JOIN users d ON a.iddentist = d.idusers
-  WHERE a.is_deleted = FALSE
-)
-SELECT
-  ai.idappointment,
-  ai.date,
-  ai.patient_name,
-  ai.dentist_name,
-  STRING_AGG(s.name, ', ') AS services,
-  SUM(s.price) AS total_price,
-  r.treatment_notes
-FROM appointment_info ai
-JOIN appointment_services aps ON ai.idappointment = aps.idappointment
-JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE
-LEFT JOIN records r ON r.idappointment = ai.idappointment AND r.is_deleted = FALSE
-GROUP BY
-  ai.idappointment,
-  ai.date,
-  ai.patient_name,
-  ai.dentist_name,
-  r.treatment_notes
-ORDER BY ai.date ASC;
+    WITH appointment_info AS (
+      SELECT
+        a.idappointment,
+        a.date,
+        a.status,
+        -- Patient full name if exists and not deleted, else fallback to appointment's patient_name or 'Deleted User'
+        CASE
+          WHEN a.idpatient IS NOT NULL AND p.idusers IS NOT NULL THEN 
+            CASE WHEN p.is_deleted THEN 'Deleted User'
+                 ELSE CONCAT(p.firstname, ' ', p.lastname)
+            END
+          ELSE a.patient_name
+        END AS patient_name,
+        -- Dentist full name, label (Deleted) if deleted
+        CONCAT(d.firstname, ' ', d.lastname) || CASE WHEN d.is_deleted THEN ' (Deleted)' ELSE '' END AS dentist_name
+      FROM appointment a
+      LEFT JOIN users p ON a.idpatient = p.idusers
+      LEFT JOIN users d ON a.iddentist = d.idusers
+      WHERE a.is_deleted = FALSE
+        AND a.status = 'completed'
+    ),
+    services_info AS (
+      SELECT
+        aps.idappointment,
+        json_agg(
+          json_build_object(
+            'idservice', s.idservice,
+            'name', s.name || CASE WHEN s.is_deleted THEN ' (Deleted)' ELSE '' END,
+            'price', s.price
+          )
+        ) AS services,
+        SUM(s.price) AS total_price
+      FROM appointment_services aps
+      JOIN service s ON aps.idservice = s.idservice
+      GROUP BY aps.idappointment
+    )
+    SELECT
+      ai.idappointment,
+      ai.date,
+      ai.patient_name,
+      ai.dentist_name,
+      COALESCE(si.services, '[]') AS services,
+      COALESCE(si.total_price, 0) AS total_price,
+      r.treatment_notes,
+      r.paymentstatus,
+      r.total_paid
+    FROM appointment_info ai
+    LEFT JOIN services_info si ON ai.idappointment = si.idappointment
+    LEFT JOIN records r ON r.idappointment = ai.idappointment AND r.is_deleted = FALSE
+    ORDER BY ai.date ASC;
   `;
 
   try {
     const result = await pool.query(query);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No past appointments found' });
+      return res.status(404).json({ message: 'No completed appointments found' });
     }
 
     return res.status(200).json({
       message: 'Records fetched successfully',
       records: result.rows
     });
+
   } catch (err) {
     console.error('❌ Error fetching records:', err.message);
-    return res.status(500).json({ 
-      message: 'Error fetching records', 
-      error: err.message 
+    return res.status(500).json({
+      message: 'Error fetching records',
+      error: err.message
     });
   }
 });
@@ -4131,6 +4188,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
