@@ -1800,7 +1800,7 @@ app.delete('/api/website/record/:id', async (req, res) => {
   }
 });
 
-// ✅ Soft-delete a specific appointment (undo-ready)
+// ✅ Soft-delete a specific appointment (undo-ready, uniform structure)
 app.delete('/api/website/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
   const adminId = req.body.adminId; // optional, for logging
@@ -1823,46 +1823,47 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found or already deleted' });
     }
 
-    const appointment = appointmentResult.rows[0];
+    // Make existingAppointment an array for uniformity like services
+    const existingAppointment = appointmentResult.rows; // array of one object
 
-    // 2️⃣ Soft delete the appointment
+    // 2️⃣ Fetch existing services
+    const servicesResult = await pool.query(
+      'SELECT * FROM appointment_services WHERE idappointment = $1',
+      [appointmentId]
+    );
+    const appointmentServices = servicesResult.rows;
+
+    // 3️⃣ Soft delete the appointment
     await pool.query(
       'UPDATE appointment SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE idappointment = $1',
       [appointmentId]
     );
 
-   // 3️⃣ Log admin activity (undo-ready)
-if (adminId) {
-  try {
-    const undoData = { 
-      primary_key: 'idappointment',
-      table: 'appointment',
-     data: {
-  idappointment: appointment.idappointment,
-  iddentist: appointment.iddentist,
-  idpatient: appointment.idpatient,
-  status: appointment.status,
-  notes: appointment.notes,
-  appointment_date: appointment.date,
-  is_deleted: true,
-  deleted_at: new Date().toISOString()
-}
-    };
+    // 4️⃣ Log admin activity (undo-ready)
+    if (adminId) {
+      try {
+        const undoData = { 
+          primary_key: 'idappointment',
+          table: 'appointment',
+          data: {
+            appointment: existingAppointment, // now an array
+            appointment_services: appointmentServices
+          }
+        };
 
-    await logActivity(
-      adminId,
-      'DELETE',
-      'appointment',
-      appointmentId,
-      `Soft-deleted appointment ID ${appointmentId}`,
-      undoData
-    );
-    console.log("🪵 Activity logged successfully for appointment soft-delete.");
-  } catch (logErr) {
-    console.error("❌ Error logging activity:", logErr.message);
-  }
-}
- else {
+        await logActivity(
+          adminId,
+          'DELETE',
+          'appointment',
+          appointmentId,
+          `Soft-deleted appointment ID ${appointmentId} with ${appointmentServices.length} linked services`,
+          undoData
+        );
+        console.log("🪵 Activity logged successfully for appointment soft-delete.");
+      } catch (logErr) {
+        console.error("❌ Error logging activity:", logErr.message);
+      }
+    } else {
       console.warn("⚠️ No adminId provided; activity log skipped");
     }
 
@@ -3213,7 +3214,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     }
     const existingAppointment = existingResult.rows[0];
 
-    // 2️⃣ Fetch existing services (for undo logging)
+    // 2️⃣ Fetch existing services
     const existingServicesResult = await pool.query(
       'SELECT * FROM appointment_services WHERE idappointment = $1',
       [idappointment]
@@ -3255,7 +3256,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     const updatedResult = await pool.query(updateQuery, queryParams);
     const updatedAppointment = updatedResult.rows[0];
 
-    // 4️⃣ Replace services (delete then insert new ones)
+    // 4️⃣ Replace services
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
     const insertPromises = idservice.map(sid =>
       pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, sid])
@@ -3263,21 +3264,32 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     await Promise.all(insertPromises);
 
     // 5️⃣ Prepare changes for activity log
-    const changes = { idappointment: existingAppointment.idappointment }; // always include PK
+    const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name']; // ✅ add this
+    const changes = { idappointment: existingAppointment.idappointment }; 
     const changedFields = [];
 
-    const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name'];
     compareFields.forEach(f => {
-      if (existingAppointment[f]?.toString() !== updatedAppointment[f]?.toString()) {
-        changes[f] = existingAppointment[f]; // old value
+      const oldVal = existingAppointment[f];
+      const newVal = updatedAppointment[f];
+
+      if ((oldVal ?? '').toString() !== (newVal ?? '').toString()) {
+        changes[f] = oldVal;
         changedFields.push(f);
       }
     });
 
-    const oldServiceIds = existingServices.map(s => s.idservice);
-    if (JSON.stringify(oldServiceIds.sort()) !== JSON.stringify(idservice.sort())) {
-      changes['services'] = oldServiceIds; // old services for undo
+    // Services comparison
+    const oldServiceIds = existingServices.map(s => Number(s.idservice)).sort();
+    const newServiceIds = idservice.map(Number).sort();
+    if (JSON.stringify(oldServiceIds) !== JSON.stringify(newServiceIds)) {
+      changes['services'] = oldServiceIds;
       changedFields.push('services');
+    }
+
+    if (changedFields.length === 0) {
+      console.log("⚠️ No visible changes detected — skipping activity log");
+    } else {
+      console.log("🪵 Fields changed:", changedFields);
     }
 
     // 6️⃣ Log activity if there were changes
@@ -3299,8 +3311,6 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       } catch (logErr) {
         console.error("❌ Error logging activity:", logErr.message);
       }
-    } else {
-      console.log("⚠️ No visible changes detected — skipping activity log");
     }
 
     // ✅ Return response
@@ -4087,6 +4097,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
