@@ -3188,7 +3188,7 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   }
 });
 
-// ✅ Update a specific appointment (with full undo-ready activity log)
+// ✅ Update a specific appointment (with full undo-ready activity log) 
 app.put('/api/website/appointments/:id', async (req, res) => {
   const idappointment = req.params.id;
   const { idpatient, iddentist, date, status, notes, idservice, patient_name, adminId } = req.body;
@@ -3213,6 +3213,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       return res.status(404).json({ message: 'Appointment not found' });
     }
     const existingAppointment = existingResult.rows[0];
+    console.log("📝 Existing appointment:", existingAppointment);
 
     // 2️⃣ Fetch existing services
     const existingServicesResult = await pool.query(
@@ -3220,6 +3221,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       [idappointment]
     );
     const existingServices = existingServicesResult.rows;
+    console.log("📝 Existing services:", existingServices.map(s => s.idservice));
 
     // 3️⃣ Update appointment
     let updateQuery, queryParams;
@@ -3255,6 +3257,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
 
     const updatedResult = await pool.query(updateQuery, queryParams);
     const updatedAppointment = updatedResult.rows[0];
+    console.log("📝 Updated appointment:", updatedAppointment);
 
     // 4️⃣ Replace services
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
@@ -3262,15 +3265,17 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, sid])
     );
     await Promise.all(insertPromises);
+    console.log("📝 Services replaced:", idservice);
 
     // 5️⃣ Prepare changes for activity log
-    const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name']; // ✅ add this
+    const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name'];
     const changes = { idappointment: existingAppointment.idappointment }; 
     const changedFields = [];
 
     compareFields.forEach(f => {
       const oldVal = existingAppointment[f];
       const newVal = updatedAppointment[f];
+      console.log(`🔍 Comparing field "${f}": old="${oldVal}", new="${newVal}"`);
 
       if ((oldVal ?? '').toString() !== (newVal ?? '').toString()) {
         changes[f] = oldVal;
@@ -3281,16 +3286,14 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     // Services comparison
     const oldServiceIds = existingServices.map(s => Number(s.idservice)).sort();
     const newServiceIds = idservice.map(Number).sort();
+    console.log("🔍 Comparing services: old=", oldServiceIds, "new=", newServiceIds);
     if (JSON.stringify(oldServiceIds) !== JSON.stringify(newServiceIds)) {
       changes['services'] = oldServiceIds;
       changedFields.push('services');
     }
 
-    if (changedFields.length === 0) {
-      console.log("⚠️ No visible changes detected — skipping activity log");
-    } else {
-      console.log("🪵 Fields changed:", changedFields);
-    }
+    console.log("🪵 Final changes object for logging:", changes);
+    console.log("🪵 Changed fields array:", changedFields);
 
     // 6️⃣ Log activity if there were changes
     if (changedFields.length > 0 && adminId) {
@@ -3307,10 +3310,12 @@ app.put('/api/website/appointments/:id', async (req, res) => {
             data: changes
           }
         );
-        console.log("🪵 Activity logged successfully.");
+        console.log("✅ Activity logged successfully.");
       } catch (logErr) {
         console.error("❌ Error logging activity:", logErr.message);
       }
+    } else {
+      console.log("⚠️ No visible changes detected — skipping activity log");
     }
 
     // ✅ Return response
@@ -4097,6 +4102,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
