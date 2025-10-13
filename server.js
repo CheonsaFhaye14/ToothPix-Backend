@@ -3188,12 +3188,13 @@ app.put('/api/app/appointments/:id', async (req, res) => {
   }
 });
 
-// ✅ Update a specific appointment (with full undo-ready activity log) 
+// ✅ Update a specific appointment (with full undo-ready activity log)
 app.put('/api/website/appointments/:id', async (req, res) => {
   const idappointment = req.params.id;
   const { idpatient, iddentist, date, status, notes, idservice, patient_name, adminId } = req.body;
 
   console.log("📥 Incoming request to update appointment:", req.body);
+  console.log("🧑 Admin ID received:", adminId);
 
   // 0️⃣ Basic validation
   if (!iddentist || !idservice || !Array.isArray(idservice) || idservice.length === 0) {
@@ -3269,7 +3270,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
 
     // 5️⃣ Prepare changes for activity log
     const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name'];
-    const changes = { idappointment: existingAppointment.idappointment }; 
+    const changes = { idappointment: existingAppointment.idappointment };
     const changedFields = [];
 
     compareFields.forEach(f => {
@@ -3294,25 +3295,29 @@ app.put('/api/website/appointments/:id', async (req, res) => {
 
     console.log("🪵 Final changes object for logging:", changes);
     console.log("🪵 Changed fields array:", changedFields);
+    console.log("🧑 Admin ID before logging:", adminId);
 
     // 6️⃣ Log activity if there were changes
-    if (changedFields.length > 0 && adminId) {
-      try {
-        await logActivity(
-          adminId,
-          'EDIT',
-          'appointment',
-          idappointment,
-          `Updated appointment ID ${idappointment} (${changedFields.join(', ')})`,
-          {
-            primary_key: 'idappointment',
-            table: 'appointment',
-            data: changes
-          }
-        );
-        console.log("✅ Activity logged successfully.");
-      } catch (logErr) {
-        console.error("❌ Error logging activity:", logErr.message);
+    if (changedFields.length > 0) {
+      if (!adminId) console.warn("⚠️ Admin ID is missing; cannot log activity!");
+      else {
+        try {
+          await logActivity(
+            adminId,
+            'EDIT',
+            'appointment',
+            idappointment,
+            `Updated appointment ID ${idappointment} (${changedFields.join(', ')})`,
+            {
+              primary_key: 'idappointment',
+              table: 'appointment',
+              data: changes
+            }
+          );
+          console.log("✅ Activity logged successfully.");
+        } catch (logErr) {
+          console.error("❌ Error logging activity:", logErr.message);
+        }
       }
     } else {
       console.log("⚠️ No visible changes detected — skipping activity log");
@@ -3330,6 +3335,7 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     return res.status(500).json({ message: 'Error updating appointment', error: error.message });
   }
 });
+
 
 // ✅ Get all active patients (users with usertype = 'patient')
 app.get('/api/app/patients', async (req, res) => {
@@ -4102,6 +4108,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
