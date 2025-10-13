@@ -1800,7 +1800,7 @@ app.delete('/api/website/record/:id', async (req, res) => {
   }
 });
 
-// ✅ Soft-delete a specific appointment (undo-ready, uniform structure)
+// ✅ Soft-delete a specific appointment (undo-ready, uniform structure, verbose logs)
 app.delete('/api/website/appointments/:id', async (req, res) => {
   const appointmentId = parseInt(req.params.id, 10);
   const adminId = req.body.adminId; // optional, for logging
@@ -1809,48 +1809,59 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
 
   // 0️⃣ Validate appointment ID
   if (isNaN(appointmentId)) {
+    console.log("⚠️ Invalid appointment ID");
     return res.status(400).json({ message: 'Invalid appointment ID' });
   }
 
   try {
     // 1️⃣ Fetch existing appointment
+    console.log("🔍 Fetching existing appointment...");
     const appointmentResult = await pool.query(
       'SELECT * FROM appointment WHERE idappointment = $1 AND is_deleted = FALSE',
       [appointmentId]
     );
+    console.log("📌 Appointment query result:", appointmentResult.rows);
 
     if (appointmentResult.rows.length === 0) {
+      console.log("⚠️ Appointment not found or already deleted");
       return res.status(404).json({ message: 'Appointment not found or already deleted' });
     }
 
-    // Make existingAppointment an array for uniformity like services
-    const existingAppointment = appointmentResult.rows; // array of one object
+    const existingAppointment = appointmentResult.rows[0]; // single object
+    console.log("📝 Existing appointment:", existingAppointment);
 
     // 2️⃣ Fetch existing services
+    console.log("🔍 Fetching existing appointment services...");
     const servicesResult = await pool.query(
       'SELECT * FROM appointment_services WHERE idappointment = $1',
       [appointmentId]
     );
     const appointmentServices = servicesResult.rows;
+    console.log("📝 Existing services:", appointmentServices);
 
     // 3️⃣ Soft delete the appointment
-    await pool.query(
-      'UPDATE appointment SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE idappointment = $1',
+    console.log("✏️ Soft-deleting appointment...");
+    const deleteResult = await pool.query(
+      'UPDATE appointment SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE idappointment = $1 RETURNING *',
       [appointmentId]
     );
+    console.log("✅ Soft-delete query result:", deleteResult.rows[0]);
 
-    // 4️⃣ Log admin activity (undo-ready)
+    // 4️⃣ Prepare undo-ready data
+    const undoData = { 
+      primary_key: 'idappointment',
+      table: 'appointment',
+      data: {
+        appointment: existingAppointment, // single object
+        appointment_services: appointmentServices
+      }
+    };
+    console.log("🧰 Undo-ready data prepared:", undoData);
+
+    // 5️⃣ Log admin activity (undo-ready)
     if (adminId) {
+      console.log("📝 Logging activity...");
       try {
-        const undoData = { 
-          primary_key: 'idappointment',
-          table: 'appointment',
-          data: {
-            appointment: existingAppointment, // now an array
-            appointment_services: appointmentServices
-          }
-        };
-
         await logActivity(
           adminId,
           'DELETE',
@@ -1861,10 +1872,10 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
         );
         console.log("🪵 Activity logged successfully for appointment soft-delete.");
       } catch (logErr) {
-        console.error("❌ Error logging activity:", logErr.message);
+        console.error("❌ Error logging activity:", logErr);
       }
     } else {
-      console.warn("⚠️ No adminId provided; activity log skipped");
+      console.warn("⚠️ No adminId provided; skipping activity log");
     }
 
     return res.status(200).json({ message: 'Appointment soft-deleted successfully' });
@@ -4125,6 +4136,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
