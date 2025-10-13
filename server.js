@@ -3218,19 +3218,9 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       'SELECT * FROM appointment_services WHERE idappointment = $1',
       [idappointment]
     );
-    const existingServices = existingServicesResult.rows; // keep full rows, not just ids
+    const existingServices = existingServicesResult.rows;
 
-    // 3️⃣ Prepare full undo data BEFORE changes
-    const undoData = {
-      primary_key: 'idappointment',
-      table: 'appointment',
-      data: {
-        appointment: existingAppointment,
-        appointment_services: existingServices
-      }
-    };
-
-    // 4️⃣ Update appointment
+    // 3️⃣ Update appointment
     let updateQuery, queryParams;
     if (idpatient) {
       updateQuery = `
@@ -3262,50 +3252,55 @@ app.put('/api/website/appointments/:id', async (req, res) => {
       ];
     }
 
-const updatedResult = await pool.query(updateQuery, queryParams);
-const updatedAppointment = updatedResult.rows[0];
+    const updatedResult = await pool.query(updateQuery, queryParams);
+    const updatedAppointment = updatedResult.rows[0];
 
-// 🧠 Check if anything actually changed (both appointment fields & services)
-const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name'];
-
-// Check if any of these editable fields changed
-const changed = compareFields.some(f => 
-  existingAppointment[f]?.toString() !== updatedAppointment[f]?.toString()
-);
-
-// Compare services (ignores order)
-const sameServices =
-  JSON.stringify(existingServices.map(s => s.idservice).sort()) ===
-  JSON.stringify(idservice.sort());
-
-if (!changed && sameServices) {
-  console.log("⚠️ No visible changes detected — skipping activity log");
-  return res.status(200).json({ message: 'No visible changes detected' });
-}
-
-
-    // 5️⃣ Replace services (delete then insert new ones)
+    // 4️⃣ Replace services (delete then insert new ones)
     await pool.query('DELETE FROM appointment_services WHERE idappointment = $1', [idappointment]);
     const insertPromises = idservice.map(sid =>
       pool.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, sid])
     );
     await Promise.all(insertPromises);
 
-    // 6️⃣ Log activity (store the full undo snapshot)
-    if (adminId) {
+    // 5️⃣ Prepare changes for activity log
+    const changes = { idappointment: existingAppointment.idappointment }; // always include PK
+    const changedFields = [];
+
+    const compareFields = ['idpatient', 'iddentist', 'date', 'status', 'notes', 'patient_name'];
+    compareFields.forEach(f => {
+      if (existingAppointment[f]?.toString() !== updatedAppointment[f]?.toString()) {
+        changes[f] = existingAppointment[f]; // old value
+        changedFields.push(f);
+      }
+    });
+
+    const oldServiceIds = existingServices.map(s => s.idservice);
+    if (JSON.stringify(oldServiceIds.sort()) !== JSON.stringify(idservice.sort())) {
+      changes['services'] = oldServiceIds; // old services for undo
+      changedFields.push('services');
+    }
+
+    // 6️⃣ Log activity if there were changes
+    if (changedFields.length > 0 && adminId) {
       try {
         await logActivity(
           adminId,
           'EDIT',
           'appointment',
           idappointment,
-          `Updated appointment ID ${idappointment} for dentist ID ${iddentist} (services replaced)`,
-          undoData // full undo data now includes both tables
+          `Updated appointment ID ${idappointment} (${changedFields.join(', ')})`,
+          {
+            primary_key: 'idappointment',
+            table: 'appointment',
+            data: changes
+          }
         );
-        console.log("🪵 Activity logged successfully with full undo data.");
+        console.log("🪵 Activity logged successfully.");
       } catch (logErr) {
         console.error("❌ Error logging activity:", logErr.message);
       }
+    } else {
+      console.log("⚠️ No visible changes detected — skipping activity log");
     }
 
     // ✅ Return response
