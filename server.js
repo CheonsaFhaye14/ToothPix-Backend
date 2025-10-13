@@ -1453,7 +1453,7 @@ app.post('/api/website/record', async (req, res) => {
       await logActivity(
         adminId,
         'ADD',
-        'appointment',
+        'record',
         idappointment,
         `Added new appointment ID ${idappointment}`,
         logData
@@ -4188,6 +4188,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
