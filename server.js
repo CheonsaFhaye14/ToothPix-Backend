@@ -2422,13 +2422,13 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
 
       } else if (undoData.table && undoData.data) {
         console.log("🧱 Performing single-table undo for EDIT...");
-        const record = undoData.data;
-        const fields = Object.keys(record);
-        const values = Object.values(record);
-        const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
-        const query = `UPDATE ${undoData.table} SET ${setClause}, updated_at = NOW() WHERE ${undoData.primary_key} = $${fields.length + 1}`;
-        await pool.query(query, [...values, record[undoData.primary_key]]);
-        console.log(`✅ Restored record in ${undoData.table} to match undo data`);
+       const record = undoData.data; // single-table undo
+const fields = Object.keys(record).filter(f => f !== 'updated_at'); // exclude updated_at
+const values = fields.map(f => record[f]);
+const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+const query = `UPDATE ${undoData.table} SET ${setClause}, updated_at = NOW() WHERE ${undoData.primary_key} = $${fields.length + 1}`;
+await pool.query(query, [...values, record[undoData.primary_key]]);
+console.log(`✅ Restored record in ${undoData.table} to match undo data`);
       } else {
         console.warn("⚠️ Unknown undoData format for EDIT action. Skipping...");
       }
@@ -2479,13 +2479,13 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
         console.log(`🔹 Restoring single appointment ID ${recordId}`);
 
         const recordData = data.appointment ? data.appointment : data;
-        const fields = Object.keys(recordData);
-        const values = Object.values(recordData);
-        const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+const fields = Object.keys(recordData).filter(f => f !== 'updated_at'); // exclude updated_at
+const values = fields.map(f => recordData[f]);
+const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+const query = `UPDATE ${tableName} SET ${setClause}, updated_at = NOW() WHERE ${primaryKey} = $${fields.length + 1}`;
+await pool.query(query, [...values, recordId]);
+console.log(`✅ Appointment ${recordId} restored`);
 
-        const query = `UPDATE ${tableName} SET ${setClause}, updated_at = NOW() WHERE ${primaryKey} = $${fields.length + 1}`;
-        await pool.query(query, [...values, recordId]);
-        console.log(`✅ Appointment ${recordId} restored`);
       }
 
     } else if (log.action === 'ADD') {
@@ -4131,6 +4131,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
