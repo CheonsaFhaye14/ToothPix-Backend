@@ -3296,30 +3296,47 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     console.log("🪵 Final changes object for logging:", changes);
     console.log("🪵 Changed fields array:", changedFields);
     console.log("🧑 Admin ID before logging:", adminId);
+// 5️⃣ Prepare undo-ready data for activity log
+const undoData = {
+  primary_key: 'idappointment',
+  table: 'appointment',
+  data: {
+    appointment: {
+      idappointment: existingAppointment.idappointment,
+      idpatient: existingAppointment.idpatient,
+      iddentist: existingAppointment.iddentist,
+      date: existingAppointment.date,
+      status: existingAppointment.status,
+      notes: existingAppointment.notes,
+      patient_name: existingAppointment.patient_name
+    },
+    appointment_services: existingServices.map(s => ({
+      idappointment: s.idappointment,
+      idservice: s.idservice
+    }))
+  }
+};
 
     // 6️⃣ Log activity if there were changes
-    if (changedFields.length > 0) {
-      if (!adminId) console.warn("⚠️ Admin ID is missing; cannot log activity!");
-      else {
-        try {
-          await logActivity(
-            adminId,
-            'EDIT',
-            'appointment',
-            idappointment,
-            `Updated appointment ID ${idappointment} (${changedFields.join(', ')})`,
-            {
-              primary_key: 'idappointment',
-              table: 'appointment',
-              data: changes
-            }
-          );
-          console.log("✅ Activity logged successfully.");
-        } catch (logErr) {
-          console.error("❌ Error logging activity:", logErr.message);
-        }
-      }
-    } else {
+  if (changedFields.length > 0) {
+  if (!adminId) console.warn("⚠️ Admin ID is missing; cannot log activity!");
+  else {
+    try {
+      await logActivity(
+        adminId,
+        'EDIT',
+        'appointment',
+        idappointment,
+        `Updated appointment ID ${idappointment} (${changedFields.join(', ')})`,
+        undoData // <-- use the correctly structured undo data
+      );
+      console.log("✅ Activity logged successfully.");
+    } catch (logErr) {
+      console.error("❌ Error logging activity:", logErr.message);
+    }
+  }
+}
+ else {
       console.log("⚠️ No visible changes detected — skipping activity log");
     }
 
@@ -4108,6 +4125,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
