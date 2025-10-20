@@ -118,22 +118,25 @@ const authenticateAdmin = (req, res, next) => {
   }
 };
 
-// Example of logging an environment variable
-console.log("Value before JSON.parse:", process.env.SOMETHING);
-
 // 🔥 Firebase Admin setup
 
-// Parse the service account credentials from your environment variable.
-// The GOOGLE_SERVICE_ACCOUNT should contain the entire JSON key from Firebase,
-// stored as a single-line string in your .env file.
-const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+// Check if the env variable exists
+if (!process.env.FIREBASE_ACCOUNT) {
+  throw new Error("FIREBASE_ACCOUNT env variable is missing!");
+}
 
-// Log to confirm if the variable exists (for debugging)
-console.log('GOOGLE_SERVICE_ACCOUNT:', process.env.GOOGLE_SERVICE_ACCOUNT ? 'Exists' : 'Not set');
+// Parse the service account JSON
+const serviceAccount = JSON.parse(process.env.FIREBASE_ACCOUNT);
 
-// Initialize Firebase Admin with the credentials
+// Replace literal '\n' with real newlines in the private key
+serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+
+// Log to confirm
+console.log('FIREBASE_ACCOUNT:', process.env.FIREBASE_ACCOUNT ? 'Exists' : 'Not set');
+
+// Initialize Firebase Admin
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount), // Authenticates your server to Firebase
+  credential: admin.credential.cert(serviceAccount),
 });
 
 // Confirm initialization
@@ -282,7 +285,7 @@ const upload = multer({ dest: 'temp/' });
 // Write Google Cloud service account key from environment variable to a temp file
 // This allows the Google Cloud client to authenticate
 const keyFilePath = path.join(__dirname, 'service-account.json');
-fs.writeFileSync(keyFilePath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+fs.writeFileSync(keyFilePath, process.env.GOOGLE_CLOUD_ACCOUNT);
 
 // Google Cloud Storage client setup using the key file
 const storage = new Storage({ keyFilename: keyFilePath });
