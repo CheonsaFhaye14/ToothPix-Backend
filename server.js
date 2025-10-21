@@ -459,43 +459,52 @@ app.get('/api/reports/payments', async (req, res) => {
 // API endpoint to fetch all dental records along with appointment and service details (excluding deleted entries)
 app.get('/api/reports/records', async (req, res) => {
   const query = `
-    SELECT 
-      r.idrecord,
-      -- Determine patient name: use full name from users if patient exists, otherwise use appointment's patient_name
-      CASE 
+   SELECT  
+    r.idrecord,
+    -- Determine patient name
+    CASE 
         WHEN a.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
         ELSE a.patient_name
-      END AS patient_name,
-      -- Dentist's full name
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
-      a.date AS appointment_date,          -- Appointment date
-      STRING_AGG(s.name, ', ') AS services, -- List of services
-      r.treatment_notes                     -- Notes for this record
-    FROM records r
-    JOIN appointment a ON a.idappointment = r.idappointment AND a.is_deleted = FALSE
-    LEFT JOIN users p ON p.idusers = a.idpatient AND p.is_deleted = FALSE
-    JOIN users d ON d.idusers = r.iddentist AND d.is_deleted = FALSE
-    JOIN appointment_services aps ON aps.idappointment = a.idappointment
-    JOIN service s ON s.idservice = aps.idservice AND s.is_deleted = FALSE
-    WHERE a.status != 'cancelled'          -- Ignore cancelled appointments
-    GROUP BY 
-      r.idrecord, 
-      p.firstname, 
-      p.lastname, 
-      a.patient_name, 
-      d.firstname, 
-      d.lastname, 
-      a.date, 
-      r.treatment_notes
-    ORDER BY
-      -- Sort by patient name (case-insensitive) and then by appointment date
-      LOWER(
+    END AS patient_name,
+    -- Dentist's full name from appointment
+    CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+    a.date AS appointment_date,
+    STRING_AGG(s.name, ', ') AS services,
+    r.treatment_notes
+FROM records r
+JOIN appointment a 
+    ON a.idappointment = r.idappointment 
+    AND a.is_deleted = FALSE
+LEFT JOIN users p 
+    ON p.idusers = a.idpatient 
+    AND p.is_deleted = FALSE
+LEFT JOIN users d 
+    ON d.idusers = a.iddentist 
+    AND d.is_deleted = FALSE
+JOIN appointment_services aps 
+    ON aps.idappointment = a.idappointment
+JOIN service s 
+    ON s.idservice = aps.idservice 
+    AND s.is_deleted = FALSE
+WHERE a.status != 'cancelled'
+GROUP BY 
+    r.idrecord, 
+    a.idpatient,
+    p.firstname, 
+    p.lastname, 
+    a.patient_name, 
+    d.firstname, 
+    d.lastname, 
+    a.date, 
+    r.treatment_notes
+ORDER BY
+    LOWER(
         CASE 
-          WHEN a.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
-          ELSE a.patient_name
+            WHEN a.idpatient IS NOT NULL THEN CONCAT(p.firstname, ' ', p.lastname)
+            ELSE a.patient_name
         END
-      ),
-      a.date
+    ),
+    a.date
   `;
 
   try {
@@ -1322,6 +1331,74 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
+// sync deleted status between appointment and records
+cron.schedule('* * * * *', async () => {
+  const client = await pool.connect();
+  console.log("🕐 Running sync for soft-deleted appointments and records...");
+
+  try {
+    await client.query('BEGIN');
+
+    // 1️⃣ Find completed appointments that are soft-deleted but their records are not
+    const toDeleteRecords = await client.query(`
+      SELECT r.idrecord, a.idappointment
+      FROM appointment a
+      JOIN records r ON a.idappointment = r.idappointment
+      WHERE a.is_deleted = TRUE
+        AND a.status = 'completed'
+        AND (r.is_deleted = FALSE OR r.is_deleted IS NULL)
+    `);
+
+    // 2️⃣ Find completed appointments that are NOT soft-deleted but their records ARE
+    const toRestoreRecords = await client.query(`
+      SELECT r.idrecord, a.idappointment
+      FROM appointment a
+      JOIN records r ON a.idappointment = r.idappointment
+      WHERE a.is_deleted = FALSE
+        AND a.status = 'completed'
+        AND r.is_deleted = TRUE
+    `);
+
+    // 3️⃣ Soft-delete records that are linked to deleted appointments
+    if (toDeleteRecords.rows.length > 0) {
+      const idsToDelete = toDeleteRecords.rows.map(r => r.idrecord);
+      await client.query(`
+        UPDATE records
+        SET is_deleted = TRUE,
+            deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE idrecord = ANY($1::int[])
+      `, [idsToDelete]);
+      console.log(`🗑️ Soft-deleted ${idsToDelete.length} records to match appointment deletions.`);
+    }
+
+    // 4️⃣ Restore records that were deleted but their appointments are not
+    if (toRestoreRecords.rows.length > 0) {
+      const idsToRestore = toRestoreRecords.rows.map(r => r.idrecord);
+      await client.query(`
+        UPDATE records
+        SET is_deleted = FALSE,
+            deleted_at = NULL,
+            updated_at = NOW()
+        WHERE idrecord = ANY($1::int[])
+      `, [idsToRestore]);
+      console.log(`♻️ Restored ${idsToRestore.length} records to match active appointments.`);
+    }
+
+    await client.query('COMMIT');
+
+    if (toDeleteRecords.rows.length === 0 && toRestoreRecords.rows.length === 0) {
+      console.log('✅ No mismatched delete states found — everything is in sync.');
+    }
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('💥 Sync failed:', err.message);
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/app/dentistrecords/:id', async (req, res) => { 
   const dentistId = req.params.id;
 
@@ -1371,31 +1448,22 @@ app.get('/api/app/dentistrecords/:id', async (req, res) => {
   }
 });
 
-app.post('/api/website/record', async (req, res) => {
+app.post('/api/website/record', async (req, res) => { 
   const { idpatient, patient_name, iddentist, date, services, treatment_notes } = req.body;
-  const adminId = req.body.adminId || null; // optional for logging
+  const adminId = req.body.adminId || null;
 
-  console.log('📥 Incoming request to create appointment record:', req.body);
-
-  // 0️⃣ Validate required fields
   if (!iddentist || !date || !Array.isArray(services) || services.length === 0) {
-    console.warn('⚠️ Missing or invalid dentist, date, or services.');
     return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
   }
   if (!idpatient && !patient_name) {
-    console.warn('⚠️ Either idpatient or patient_name is required.');
     return res.status(400).json({ message: 'Either idpatient or patient_name is required.' });
   }
 
   const client = await pool.connect();
   try {
-    console.log('🔄 Starting transaction...');
     await client.query('BEGIN');
 
-    // 1️⃣ Insert appointment with status = 'completed'
-    console.log('📝 Preparing appointment insert query...');
     let insertAppointmentQuery, insertParams;
-
     if (idpatient) {
       // Registered patient
       insertAppointmentQuery = `
@@ -1404,7 +1472,6 @@ app.post('/api/website/record', async (req, res) => {
         RETURNING idappointment
       `;
       insertParams = [idpatient, iddentist, date, ''];
-      console.log('👤 Registered patient insert params:', insertParams);
     } else {
       // Walk-in patient
       insertAppointmentQuery = `
@@ -1413,44 +1480,53 @@ app.post('/api/website/record', async (req, res) => {
         RETURNING idappointment
       `;
       insertParams = [iddentist, date, '', patient_name];
-      console.log('🚶 Walk-in patient insert params:', insertParams);
     }
 
     const apptResult = await client.query(insertAppointmentQuery, insertParams);
     const idappointment = apptResult.rows[0].idappointment;
-    console.log(`✅ Appointment created with ID: ${idappointment}`);
 
-    // 2️⃣ Insert appointment services
-    console.log('🛠️ Inserting appointment services...');
+    // Insert appointment services
     for (const idservice of services) {
-      console.log(`➕ Adding service ID ${idservice} to appointment ID ${idappointment}`);
       await client.query(
         `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`,
         [idappointment, idservice]
       );
     }
-    console.log('✅ All services inserted.');
 
-    // 3️⃣ Insert record (even if treatment_notes is empty)
-    console.log('📝 Inserting record for appointment...');
+    // Insert record
     await client.query(
       `INSERT INTO records (idappointment, treatment_notes, paymentstatus, total_paid)
        VALUES ($1, $2, 'unpaid', 0)`,
       [idappointment, treatment_notes?.trim() || '']
     );
-    console.log('✅ Record inserted for appointment.');
 
-    // 4️⃣ Log activity for ADD (appointment only)
+    // Fetch full names for description
+    let patientFullName = patient_name;
+    if (idpatient) {
+      const patientRes = await client.query(
+        `SELECT firstname, lastname FROM users WHERE idusers = $1`,
+        [idpatient]
+      );
+      if (patientRes.rowCount > 0) {
+        patientFullName = `${patientRes.rows[0].firstname} ${patientRes.rows[0].lastname}`;
+      }
+    }
+
+    const dentistRes = await client.query(
+      `SELECT firstname, lastname FROM users WHERE idusers = $1`,
+      [iddentist]
+    );
+    let dentistFullName = 'Unknown Dentist';
+    if (dentistRes.rowCount > 0) {
+      dentistFullName = `${dentistRes.rows[0].firstname} ${dentistRes.rows[0].lastname}`;
+    }
+
+    // Log activity
     if (adminId) {
-      console.log('🪵 Logging activity for appointment ADD...');
       const logData = {
         primary_key: 'idappointment',
         table: 'appointment',
-        data: {
-          idappointment,
-          iddentist,
-          status: 'completed'
-        }
+        data: { idappointment, iddentist, status: 'completed' }
       };
 
       await logActivity(
@@ -1458,24 +1534,18 @@ app.post('/api/website/record', async (req, res) => {
         'ADD',
         'record',
         idappointment,
-        `Added new appointment ID ${idappointment}`,
+        `Added new appointment for patient ${patientFullName} with dentist ${dentistFullName}`,
         logData
       );
-      console.log(`✅ Activity logged successfully for appointment ID ${idappointment}`);
-    } else {
-      console.warn('⚠️ No adminId provided; skipping activity log.');
     }
 
-    console.log('🔄 Committing transaction...');
     await client.query('COMMIT');
-
     return res.status(201).json({ 
       message: 'Appointment and record created successfully.', 
       idappointment 
     });
 
   } catch (error) {
-    console.error('💥 Error creating appointment and record. Rolling back transaction...', error);
     await client.query('ROLLBACK');
     return res.status(500).json({ 
       message: 'Failed to create appointment and record.', 
@@ -1483,9 +1553,9 @@ app.post('/api/website/record', async (req, res) => {
     });
   } finally {
     client.release();
-    console.log('🔚 Database connection released.');
   }
 });
+
 
 app.put('/api/app/appointmentstatus/patient/:id', async (req, res) => {
   const id = req.params.id;                 // Appointment ID
@@ -1726,120 +1796,274 @@ app.put('/api/app/appointmentstatus/:id', async (req, res) => {
   }
 });
 
+// ✅ Update record + appointment + services (only log old data that changed)
 app.put('/api/website/record/:idappointment', async (req, res) => {
-  const { idappointment } = req.params; // Appointment ID to update
-  const { iddentist, date, services, treatment_notes } = req.body; // Incoming data
+  const { idappointment } = req.params;
+  const { iddentist, date, services, treatment_notes, adminId } = req.body;
+
+  console.log("📥 Incoming request to update record:", req.body);
 
   if (!iddentist || !date || !Array.isArray(services)) {
+    console.warn("⚠️ Missing or invalid dentist, date, or services.");
     return res.status(400).json({ message: 'Missing or invalid dentist, date, or services.' });
   }
 
+  const client = await pool.connect();
   try {
-    await pool.query('BEGIN'); // Start transaction
+    console.log("🔄 Beginning transaction...");
+    await client.query('BEGIN');
 
-    // 🔹 1. Update dentist and appointment date
-    const updateAppointmentQuery = `
-      UPDATE appointment
-      SET iddentist = $1, date = $2
-      WHERE idappointment = $3
-      RETURNING *;
-    `;
-    const updateResult = await pool.query(updateAppointmentQuery, [iddentist, date, idappointment]);
+    // 1️⃣ Fetch existing data
+    const apptRes = await client.query('SELECT * FROM appointment WHERE idappointment = $1', [idappointment]);
+    if (apptRes.rowCount === 0) throw new Error('Appointment not found');
+    const existingAppt = apptRes.rows[0];
 
-    if (updateResult.rowCount === 0) {
-      await pool.query('ROLLBACK');
-      return res.status(404).json({ message: 'Appointment not found.' });
-    }
+    const recordRes = await client.query('SELECT * FROM records WHERE idappointment = $1', [idappointment]);
+    const existingRecord = recordRes.rowCount > 0 ? recordRes.rows[0] : null;
 
-    // 🔹 2. Handle appointment services
-    const currentServicesResult = await pool.query(
-      `SELECT idservice FROM appointment_services WHERE idappointment = $1`,
-      [idappointment]
+    const servicesRes = await client.query('SELECT * FROM appointment_services WHERE idappointment = $1', [idappointment]);
+    const existingServices = servicesRes.rows;
+    const oldServiceIds = existingServices.map(s => Number(s.idservice)).sort();
+
+    // 2️⃣ Update appointment
+    const updateApptRes = await client.query(
+      `UPDATE appointment 
+       SET iddentist = $1, date = $2, updated_at = NOW()
+       WHERE idappointment = $3 RETURNING *`,
+      [iddentist, date, idappointment]
     );
-    const currentServiceIds = currentServicesResult.rows.map(row => row.idservice);
-    const newServiceIds = [...new Set(services)]; // Remove duplicates
+    const updatedAppt = updateApptRes.rows[0];
 
-    // Services to add/remove
-    const servicesToAdd = newServiceIds.filter(id => !currentServiceIds.includes(id));
-    const servicesToRemove = currentServiceIds.filter(id => !newServiceIds.includes(id));
+    // 3️⃣ Update services
+    const newServiceIds = [...new Set(services.map(Number))].sort();
+    const toDelete = oldServiceIds.filter(id => !newServiceIds.includes(id));
+    const toAdd = newServiceIds.filter(id => !oldServiceIds.includes(id));
 
-    // Delete removed services
-    for (const idservice of servicesToRemove) {
-      await pool.query(
-        `DELETE FROM appointment_services WHERE idappointment = $1 AND idservice = $2`,
-        [idappointment, idservice]
-      );
+    for (const idservice of toDelete) {
+      await client.query('DELETE FROM appointment_services WHERE idappointment = $1 AND idservice = $2', [idappointment, idservice]);
+    }
+    for (const idservice of toAdd) {
+      await client.query('INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)', [idappointment, idservice]);
     }
 
-    // Insert new services
-    for (const idservice of servicesToAdd) {
-      await pool.query(
-        `INSERT INTO appointment_services (idappointment, idservice) VALUES ($1, $2)`,
-        [idappointment, idservice]
-      );
-    }
-
-    // 🔹 3. Update or insert treatment notes in records
+    // 4️⃣ Update or insert record
+    let updatedRecord = existingRecord;
     if (treatment_notes !== undefined) {
-      const recordCheck = await pool.query(
-        `SELECT idrecord FROM records WHERE idappointment = $1`,
-        [idappointment]
-      );
-
-      if (recordCheck.rowCount > 0) {
-        // Update existing record
-        await pool.query(
-          `UPDATE records SET treatment_notes = $1 WHERE idappointment = $2`,
+      if (existingRecord) {
+        await client.query(
+          'UPDATE records SET treatment_notes = $1, updated_at = NOW() WHERE idappointment = $2',
           [treatment_notes, idappointment]
         );
+        const newRecordRes = await client.query('SELECT * FROM records WHERE idappointment = $1', [idappointment]);
+        updatedRecord = newRecordRes.rows[0];
       } else {
-        // Insert new record if none exists
-        const apptRes = await pool.query(
-          `SELECT idpatient, iddentist FROM appointment WHERE idappointment = $1`,
-          [idappointment]
+        await client.query(
+          'INSERT INTO records (idappointment, iddentist, treatment_notes) VALUES ($1, $2, $3)',
+          [idappointment, iddentist, treatment_notes]
         );
-        if (apptRes.rowCount === 0) {
-          await pool.query('ROLLBACK');
-          return res.status(404).json({ message: 'Appointment not found when creating record.' });
-        }
-        const { idpatient, iddentist: dentistIdFromAppt } = apptRes.rows[0];
-
-        await pool.query(
-          `INSERT INTO records (idpatient, iddentist, idappointment, treatment_notes)
-           VALUES ($1, $2, $3, $4)`,
-          [idpatient, dentistIdFromAppt, idappointment, treatment_notes]
-        );
+        const newRecordRes = await client.query('SELECT * FROM records WHERE idappointment = $1', [idappointment]);
+        updatedRecord = newRecordRes.rows[0];
       }
     }
 
-    await pool.query('COMMIT'); // Commit transaction
-    return res.status(200).json({ message: 'Appointment updated successfully.' });
+    // 5️⃣ Detect changes
+    const changedFields = [];
+    const oldValues = {};
+
+    if (existingAppt.iddentist !== iddentist) {
+      changedFields.push('dentist');
+      oldValues.iddentist = existingAppt.iddentist;
+    }
+    if (existingAppt.date.toISOString() !== new Date(date).toISOString()) {
+      changedFields.push('date');
+      oldValues.date = existingAppt.date;
+    }
+    if (JSON.stringify(oldServiceIds) !== JSON.stringify(newServiceIds)) {
+      changedFields.push('services');
+      oldValues.services = oldServiceIds;
+    }
+    if (existingRecord && existingRecord.treatment_notes !== treatment_notes) {
+      changedFields.push('treatment_notes');
+      oldValues.treatment_notes = existingRecord.treatment_notes;
+    }
+
+    // 6️⃣ Build undoData with *only changed fields*
+    const undoData = {
+      primary_key: 'idappointment',
+      primary_keys: {
+        appointment: 'idappointment',
+        records: 'idrecord',
+        appointment_services: 'idappointment'
+      },
+      data: {}
+    };
+
+    if (changedFields.includes('dentist') || changedFields.includes('date')) {
+      undoData.data.appointment = {
+        idappointment: existingAppt.idappointment,
+        ...(oldValues.iddentist !== undefined && { iddentist: oldValues.iddentist }),
+        ...(oldValues.date !== undefined && { date: oldValues.date }),
+        updated_at: existingAppt.updated_at
+      };
+    }
+
+    if (changedFields.includes('treatment_notes') && existingRecord) {
+      undoData.data.records = {
+        idrecord: existingRecord.idrecord,
+        idappointment: existingRecord.idappointment,
+        treatment_notes: oldValues.treatment_notes,
+        updated_at: existingRecord.updated_at
+      };
+    }
+
+    if (changedFields.includes('services')) {
+      undoData.data.appointment_services = existingServices.map(s => ({
+        idappointment: s.idappointment,
+        idservice: s.idservice
+      }));
+    }
+
+    // 7️⃣ Build description
+    const patientName = existingAppt.patient_name || 'Patient';
+    const description = `Updated ${patientName}'s (${changedFields.join(', ')}) appointment (ID: ${idappointment})`;
+
+    // 8️⃣ Log only if something changed
+    if (changedFields.length > 0 && adminId) {
+      // 🧹 Remove updated_at fields to prevent Postgres duplicate column error
+if (undoData.data.appointment && undoData.data.appointment.updated_at) {
+  delete undoData.data.appointment.updated_at;
+}
+if (undoData.data.records && undoData.data.records.updated_at) {
+  delete undoData.data.records.updated_at;
+}
+if (Array.isArray(undoData.data.appointment_services)) {
+  undoData.data.appointment_services = undoData.data.appointment_services.map(s => {
+    const { updated_at, ...rest } = s;
+    return rest;
+  });
+}
+
+      await logActivity(adminId, 'EDIT', 'record', idappointment, description, undoData);
+      console.log("✅ Activity logged successfully:", changedFields);
+    } else {
+      console.log("⚠️ No changes detected or missing admin ID — skipping log");
+    }
+
+    await client.query('COMMIT');
+    console.log("✔ Transaction committed successfully");
+    return res.status(200).json({ message: 'Record updated successfully.' });
+
   } catch (err) {
-    await pool.query('ROLLBACK'); // Rollback on error
-    console.error('Error updating appointment:', err.message);
-    return res.status(500).json({ message: 'Failed to update appointment', error: err.message });
+    await client.query('ROLLBACK');
+    console.error("❌ Transaction rolled back:", err.message);
+    return res.status(500).json({ message: 'Failed to update record', error: err.message });
+  } finally {
+    client.release();
+    console.log("🔚 Database connection released");
   }
 });
 
+
 app.delete('/api/website/record/:id', async (req, res) => {
-  const id = req.params.id; // Appointment ID to delete
+  const idappointment = parseInt(req.params.id, 10);
+  const adminId = req.body.adminId; // optional for logging
+
+  console.log(`📥 Incoming request to soft-delete record (appointment) ID: ${idappointment}, adminId: ${adminId}`);
+
+  // 0️⃣ Validate appointment ID
+  if (isNaN(idappointment)) {
+    console.log("⚠️ Invalid appointment ID");
+    return res.status(400).json({ message: 'Invalid appointment ID' });
+  }
 
   try {
-    // 🔹 Delete the appointment from the appointment table
-    // Note: If your DB has ON DELETE CASCADE, related rows in appointment_services and records will be removed automatically.
-    // Otherwise, you may need to delete manually from those tables first.
+    // 1️⃣ Fetch existing appointment (only if not already deleted)
+    console.log("🔍 Fetching existing appointment...");
+    const appointmentResult = await pool.query(
+      'SELECT * FROM appointment WHERE idappointment = $1 AND is_deleted = FALSE',
+      [idappointment]
+    );
 
-    const deleteQuery = `DELETE FROM appointment WHERE idappointment = $1`;
-    const result = await pool.query(deleteQuery, [id]);
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Appointment not found' });
+    if (appointmentResult.rows.length === 0) {
+      console.log("⚠️ Appointment not found or already deleted");
+      return res.status(404).json({ message: 'Appointment not found or already deleted' });
     }
 
-    return res.status(200).json({ message: 'Appointment deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting appointment:', error.message);
-    return res.status(500).json({ message: 'Error deleting appointment', error: error.message });
+    const existingAppointment = appointmentResult.rows[0];
+    console.log("📝 Existing appointment:", existingAppointment);
+
+    // 2️⃣ Find matching record entry (if any)
+    console.log("🔍 Checking for related record...");
+    const recordResult = await pool.query(
+      'SELECT * FROM records WHERE idappointment = $1 AND is_deleted = FALSE',
+      [idappointment]
+    );
+
+    const existingRecord = recordResult.rows[0];
+    if (existingRecord) {
+      console.log(`🧾 Found related record ID: ${existingRecord.idrecord}`);
+    } else {
+      console.log("⚠️ No related record found (possibly already deleted)");
+    }
+
+    // 3️⃣ Soft delete appointment
+    console.log("✏️ Soft-deleting appointment...");
+    await pool.query(
+      'UPDATE appointment SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE idappointment = $1',
+      [idappointment]
+    );
+    console.log("✅ Appointment soft-deleted successfully");
+
+    // 4️⃣ Soft delete related record (if it exists)
+    if (existingRecord) {
+      console.log("✏️ Soft-deleting related record...");
+      await pool.query(
+        'UPDATE records SET is_deleted = TRUE, deleted_at = NOW(), updated_at = NOW() WHERE idrecord = $1',
+        [existingRecord.idrecord]
+      );
+      console.log("✅ Related record soft-deleted successfully");
+    }
+
+    // 5️⃣ Prepare undo-ready data
+    const undoData = {
+      primary_key: 'idappointment',
+      table: 'appointment',
+      data: {
+        idappointment,
+        is_deleted: true,
+        deleted_at: new Date().toISOString()
+      },
+      related_record: existingRecord
+        ? { idrecord: existingRecord.idrecord, is_deleted: true, deleted_at: new Date().toISOString() }
+        : null
+    };
+    console.log("🧰 Undo-ready data prepared:", undoData);
+
+    // 6️⃣ Log admin activity (optional)
+    if (adminId) {
+      console.log("📝 Logging activity...");
+      try {
+        await logActivity(
+          adminId,
+          'DELETE',
+          'record',
+          idappointment,
+          `Deleted Record`,
+          undoData
+        );
+        console.log("🪵 Activity logged successfully for record+appointment soft-delete.");
+      } catch (logErr) {
+        console.error("❌ Error logging activity:", logErr);
+      }
+    } else {
+      console.warn("⚠️ No adminId provided; skipping activity log");
+    }
+
+    return res.status(200).json({ message: 'Record and appointment soft-deleted successfully' });
+
+  } catch (err) {
+    console.error('💥 Unexpected error deleting record:', err);
+    return res.status(500).json({ message: 'Error deleting record', error: err.message });
   }
 });
 
@@ -1930,15 +2154,14 @@ app.get('/api/website/record', async (req, res) => {
         a.idappointment,
         a.date,
         a.status,
-        -- Patient full name if exists and not deleted, else fallback to appointment's patient_name or 'Deleted User'
         CASE
-          WHEN a.idpatient IS NOT NULL AND p.idusers IS NOT NULL THEN 
-            CASE WHEN p.is_deleted THEN 'Deleted User'
-                 ELSE CONCAT(p.firstname, ' ', p.lastname)
+          WHEN p.idusers IS NOT NULL THEN
+            CASE 
+              WHEN p.is_deleted THEN 'Deleted User'
+              ELSE CONCAT(p.firstname, ' ', p.lastname)
             END
-          ELSE a.patient_name
+          ELSE COALESCE(a.patient_name, 'Unknown Patient')
         END AS patient_name,
-        -- Dentist full name, label (Deleted) if deleted
         CONCAT(d.firstname, ' ', d.lastname) || CASE WHEN d.is_deleted THEN ' (Deleted)' ELSE '' END AS dentist_name
       FROM appointment a
       LEFT JOIN users p ON a.idpatient = p.idusers
@@ -1959,6 +2182,7 @@ app.get('/api/website/record', async (req, res) => {
         SUM(s.price) AS total_price
       FROM appointment_services aps
       JOIN service s ON aps.idservice = s.idservice
+      WHERE s.is_deleted = FALSE
       GROUP BY aps.idappointment
     )
     SELECT
@@ -1968,12 +2192,17 @@ app.get('/api/website/record', async (req, res) => {
       ai.dentist_name,
       COALESCE(si.services, '[]') AS services,
       COALESCE(si.total_price, 0) AS total_price,
+      r.idrecord,
       r.treatment_notes,
       r.paymentstatus,
       r.total_paid
     FROM appointment_info ai
-    LEFT JOIN services_info si ON ai.idappointment = si.idappointment
-    LEFT JOIN records r ON r.idappointment = ai.idappointment AND r.is_deleted = FALSE
+    JOIN records r 
+      ON r.idappointment = ai.idappointment 
+      AND r.is_deleted = FALSE  -- ✅ moved filter INSIDE join
+    LEFT JOIN services_info si 
+      ON ai.idappointment = si.idappointment
+    WHERE ai.idappointment IS NOT NULL
     ORDER BY ai.date ASC;
   `;
 
@@ -1981,7 +2210,7 @@ app.get('/api/website/record', async (req, res) => {
     const result = await pool.query(query);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No completed appointments found' });
+      return res.status(404).json({ message: 'No completed appointment records found' });
     }
 
     return res.status(200).json({
@@ -1998,6 +2227,8 @@ app.get('/api/website/record', async (req, res) => {
   }
 });
 
+
+
 app.get('/api/website/payment', async (req, res) => {
   const client = await pool.connect();
 
@@ -2006,8 +2237,8 @@ app.get('/api/website/payment', async (req, res) => {
 
     // STEP 1: Insert missing records for past appointments (if any), only for non-deleted appointments
     const insertMissingRecordsQuery = `
-      INSERT INTO records (idpatient, iddentist, idappointment)
-      SELECT a.idpatient, a.iddentist, a.idappointment
+      INSERT INTO records (idappointment)
+      SELECT a.idappointment
       FROM appointment a
       LEFT JOIN records r ON r.idappointment = a.idappointment
       WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
@@ -2023,7 +2254,8 @@ app.get('/api/website/payment', async (req, res) => {
         a.date,
         CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
         CASE
-          WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE THEN CONCAT(p.firstname, ' ', p.lastname)
+          WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE 
+            THEN CONCAT(p.firstname, ' ', p.lastname)
           ELSE a.patient_name
         END AS patient_name,
         STRING_AGG(s.name || ' ' || s.price, ', ') AS services_with_prices,
@@ -2042,11 +2274,9 @@ app.get('/api/website/payment', async (req, res) => {
       GROUP BY 
         a.idappointment, 
         a.date, 
-        CONCAT(d.firstname, ' ', d.lastname),
-        CASE
-          WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE THEN CONCAT(p.firstname, ' ', p.lastname)
-          ELSE a.patient_name
-        END,
+        d.firstname, d.lastname,
+        p.firstname, p.lastname, p.idusers, p.is_deleted,
+        a.patient_name,
         r.paymentstatus, 
         r.total_paid
       ORDER BY a.date DESC;
@@ -2067,7 +2297,7 @@ app.get('/api/website/payment', async (req, res) => {
 
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Error in payment API:', err.message);
+    console.error('❌ Error in payment API:', err.message);
     return res.status(500).json({
       message: 'Error fetching payments',
       error: err.message
@@ -2077,21 +2307,28 @@ app.get('/api/website/payment', async (req, res) => {
   }
 });
 
-
+// ✅ Route to update payment details for a record (verbose logs)
 app.put('/api/website/payment/:id', async (req, res) => {
-  const { id } = req.params;
+  const { id } = req.params; // appointment ID
+  const adminId = req.body.admin_id;
   const { total_paid, total_price } = req.body;
 
-  // ✅ Validate inputs
-  if (isNaN(total_paid) || total_paid < 0) {
-    return res.status(400).json({ message: 'Invalid total_paid amount' });
+  console.log(`📥 Incoming request to update payment for appointment ID: ${id}, adminId: ${adminId}`);
+  console.log('💰 Payload:', { total_paid, total_price });
+
+  // ✅ Validate total_paid
+  if (total_paid === undefined || isNaN(total_paid) || total_paid < 0) {
+    console.warn('⚠️ Invalid total_paid value detected:', total_paid);
+    return res.status(400).json({ message: 'Invalid total_paid amount.' });
   }
 
-  if (isNaN(total_price) || total_price <= 0) {
-    return res.status(400).json({ message: 'Invalid total_price amount' });
+  // ✅ Validate total_price
+  if (total_price === undefined || isNaN(total_price) || total_price <= 0) {
+    console.warn('⚠️ Invalid total_price value detected:', total_price);
+    return res.status(400).json({ message: 'Invalid total_price amount.' });
   }
 
-  // ✅ Determine payment status based on total_paid vs total_price
+  // ✅ Determine payment status
   let paymentstatus;
   if (parseFloat(total_paid) === 0) {
     paymentstatus = 'unpaid';
@@ -2100,40 +2337,115 @@ app.put('/api/website/payment/:id', async (req, res) => {
   } else {
     paymentstatus = 'paid';
   }
+  console.log(`📝 Determined payment status: ${paymentstatus}`);
 
   const client = await pool.connect();
 
   try {
-    // STEP: Update the record with new payment details
-    const updateQuery = `
-      UPDATE records
-      SET total_paid = $1,
-          paymentstatus = $2
-      WHERE idappointment = $3
-      RETURNING *;
-    `;
+    console.log('🔍 Fetching existing record from records table...');
+    const recordResult = await client.query(
+      'SELECT * FROM records WHERE idappointment = $1 AND is_deleted = FALSE',
+      [id]
+    );
 
-    const result = await client.query(updateQuery, [total_paid, paymentstatus, id]);
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Appointment not found or not eligible for update' });
+    if (recordResult.rows.length === 0) {
+      console.warn('⚠️ Record not found or already deleted.');
+      return res.status(404).json({ message: 'Record not found or deleted.' });
     }
 
-    // ✅ Return success message with updated record
+    const existingRecord = recordResult.rows[0];
+    console.log('📝 Existing record fetched:', existingRecord);
+
+    // 2️⃣ Update record
+    console.log('✏️ Updating record...');
+    const updateQuery = `
+      UPDATE records
+      SET total_paid = $1, paymentstatus = $2, updated_at = NOW()
+      WHERE idappointment = $3
+      RETURNING idrecord, idappointment, total_paid, paymentstatus
+    `;
+    const updateResult = await client.query(updateQuery, [total_paid, paymentstatus, id]);
+    const updatedRecord = updateResult.rows[0];
+    console.log('✅ Record updated:', updatedRecord);
+
+    // 3️⃣ Compare fields for changes (for undo)
+    const changes = {}; // only include changed fields
+    const changedFields = []; // for description
+
+    ['total_paid', 'paymentstatus'].forEach(field => {
+  if (existingRecord[field]?.toString() !== updatedRecord[field]?.toString()) {
+    // ✅ convert total_paid to number for undoData
+    changes[field] = field === 'total_paid' ? parseFloat(existingRecord[field]) : existingRecord[field]; 
+    changedFields.push(field);
+    console.log(`✏️ Field changed: ${field}, old: ${existingRecord[field]}, new: ${updatedRecord[field]}`);
+  }
+});
+
+
+   // 4️⃣ Log activity if changes exist
+if (changedFields.length > 0) {
+  try {
+    // 🔹 Existing EDIT log
+    await logActivity(
+      adminId || null,
+      'EDIT',
+      'payment',
+      id,
+      `Updated payment for appointment ID ${id} (fields: ${changedFields.join(', ')})`,
+      { primary_key: 'idrecord', table: 'records', data: changes }
+    );
+    console.log('🪵 Activity logged successfully for payment update.');
+
+    // 🔹 Additional log for "PAY" action if fully paid
+    if (paymentstatus === 'paid') {
+   const payUndoData = {
+  primary_key: 'idrecord',
+  table: 'records',
+  data: { 
+    idrecord: existingRecord.idrecord, // ✅ add this
+    total_paid: parseFloat(existingRecord.total_paid), 
+    paymentstatus: existingRecord.paymentstatus 
+  }
+};
+
+
+      await logActivity(
+        adminId || null,
+        'PAY',
+        'payment',
+        id,
+        `Marked appointment ID ${id} as PAID`,
+        payUndoData
+      );
+      console.log('💳 PAY activity logged successfully');
+    }
+
+  } catch (logErr) {
+    console.error('❌ Error logging activity:', logErr.message);
+  }
+} else {
+  console.log('⚠️ No changes detected, skipping activity log.');
+}
+
+    // ✅ Return success
+    console.log('📤 Sending response to client...');
     return res.status(200).json({
       message: 'Payment updated successfully',
-      updatedRecord: result.rows[0],
+      updatedRecord
     });
+
   } catch (err) {
-    console.error('Error updating payment:', err.message);
+    console.error('💥 Unexpected error updating payment:', err.message);
     return res.status(500).json({
-      message: 'Failed to update payment',
+      message: 'Error updating payment',
       error: err.message
     });
   } finally {
     client.release();
+    console.log('🔒 Database connection released.');
   }
 });
+
 
 app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
@@ -2475,53 +2787,45 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
     };
 
     // 3️⃣ Perform undo depending on action
-    if (log.action === 'EDIT') {
-      console.log("✏️ Undoing EDIT (restoring previous data)...");
+   if (log.action === 'EDIT') {
+  console.log("✏️ Undoing EDIT (restoring previous data)...");
 
-      // 🧩 Multi-table (appointment + appointment_services)
-      if (undoData.data && undoData.data.appointment && undoData.data.appointment_services) {
-        console.log("🧩 Performing multi-table undo for appointment + services...");
+  if (undoData.data) {
+    const tables = Object.keys(undoData.data); // ✅ NEW — dynamically get all tables
 
-        const appointmentData = undoData.data.appointment;
-        const appointmentServicesData = undoData.data.appointment_services;
+    for (const tableName of tables) {           // ✅ NEW — loop through each table
+      const tableData = undoData.data[tableName];
 
-        // --- Appointment table update ---
-        const appFields = Object.keys(appointmentData);
-        const appValues = Object.values(appointmentData);
-        const setClause = appFields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
-        const updateQuery = `UPDATE appointment SET ${setClause}, updated_at = NOW() WHERE ${undoData.primary_key} = $${appFields.length + 1}`;
-        await pool.query(updateQuery, [...appValues, appointmentData[undoData.primary_key]]);
-        console.log(`✅ Appointment table reverted for ID ${appointmentData[undoData.primary_key]}`);
-
-        // --- Appointment_services table update ---
-        await pool.query(`DELETE FROM appointment_services WHERE ${undoData.primary_key} = $1`, [appointmentData[undoData.primary_key]]);
-        console.log("🧹 Cleared existing services for appointment", appointmentData[undoData.primary_key]);
-
-        for (const serviceRow of appointmentServicesData) {
-          const fields = Object.keys(serviceRow);
-          const values = Object.values(serviceRow);
+      if (Array.isArray(tableData)) {
+        // Handles tables like appointment_services
+        console.log(`🔁 Restoring multiple rows in ${tableName}...`);
+const tablePrimaryKey = undoData.primary_keys?.[tableName] || undoData.primary_key;
+await pool.query(`DELETE FROM ${tableName} WHERE ${tablePrimaryKey} = $1`, [tableData[0][tablePrimaryKey]]);
+        for (const row of tableData) {
+          const fields = Object.keys(row);
+          const values = Object.values(row);
           const placeholders = fields.map((_, idx) => `$${idx + 1}`).join(', ');
-          const insertQuery = `INSERT INTO appointment_services (${fields.join(', ')}) VALUES (${placeholders})`;
-          await pool.query(insertQuery, values);
+          await pool.query(`INSERT INTO ${tableName} (${fields.join(', ')}) VALUES (${placeholders})`, values);
         }
-
-        console.log(`✅ Reinserted ${appointmentServicesData.length} services for appointment ${appointmentData[undoData.primary_key]}`);
-
-      // 🧱 Single-table edit
-      } else if (undoData.table && undoData.data) {
-        console.log("🧱 Performing single-table undo...");
-        const record = undoData.data;
-        const fields = Object.keys(record);
-        const values = Object.values(record);
-        const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
-        const query = `UPDATE ${undoData.table} SET ${setClause}, updated_at = NOW() WHERE ${undoData.primary_key} = $${fields.length + 1}`;
-        await pool.query(query, [...values, record[undoData.primary_key]]);
-        console.log(`✅ Restored record in ${undoData.table} to match undo data`);
       } else {
-        console.warn("⚠️ Unknown undoData format for EDIT action. Skipping...");
-      }
+        // Handles tables like appointment or record
+        console.log(`🔁 Restoring single row in ${tableName}...`);
+        const fields = Object.keys(tableData);
+        const values = Object.values(tableData);
+        const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+        const tablePrimaryKey = undoData.primary_keys?.[tableName] || undoData.primary_key;
+await pool.query(
+  `UPDATE ${tableName} SET ${setClause}, updated_at = NOW() WHERE ${tablePrimaryKey} = $${fields.length + 1}`,
+  [...values, tableData[tablePrimaryKey]]
+);
 
-    } else if (log.action === 'DELETE') {
+      }
+    }
+  } else {
+    console.warn("⚠️ No undo data found.");
+  }
+}
+    else if (log.action === 'DELETE') {
       console.log("♻️ Undoing DELETE (restoring soft-deleted record)...");
 
       const tableName = undoData.table;
@@ -2566,7 +2870,47 @@ app.post('/api/activity_logs/undo/:logId', async (req, res) => {
       await pool.query(query, [recordId]);
       console.log(`✅ Undo ADD completed for ${tableName} record ${recordId}`);
 
-    } else {
+    } else if (log.action === 'PAY') {
+  console.log("💳 Undoing PAY action (reverting payment)...");
+
+  const tableName = undoData.table || log.table_name;
+  const primaryKey = undoData.primary_key || 'idrecord';
+  const data = undoData.data;
+
+  if (!tableName || !primaryKey || !data) {
+    console.warn("⚠️ Incomplete undo data for PAY action:", undoData);
+    return res.status(400).json({ message: 'Incomplete undo data for PAY action' });
+  }
+
+  console.log(`🔍 Restoring values for ${tableName} record ${data[primaryKey]}...`);
+  console.log("📦 Fields to restore:", data);
+
+  const fields = Object.keys(data);
+  const values = Object.values(data);
+  const setClause = fields.map((f, idx) => `${f} = $${idx + 1}`).join(', ');
+
+  try {
+    await pool.query(
+      `UPDATE ${tableName} SET ${setClause}, updated_at = NOW() WHERE ${primaryKey} = $${fields.length + 1}`,
+      [...values, data[primaryKey]]
+    );
+
+    // ✅ Fetch the record after undo to verify
+    const verifyResult = await pool.query(
+      `SELECT total_paid, paymentstatus FROM ${tableName} WHERE ${primaryKey} = $1`,
+      [data[primaryKey]]
+    );
+    console.log(`🔄 Record after PAY undo:`, verifyResult.rows[0]);
+
+    console.log(`✅ PAY undo completed for record ${data[primaryKey]} in ${tableName}`);
+  } catch (err) {
+    console.error(`❌ Error undoing PAY action for record ${data[primaryKey]} in ${tableName}:`, err.message);
+    throw err;
+  }
+}
+
+    
+    else {
       console.warn(`⚠️ Unknown action type (${log.action}). No undo performed.`);
     }
 
@@ -3342,18 +3686,15 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     compareFields.forEach(f => {
       const oldVal = existingAppointment[f];
       const newVal = updatedAppointment[f];
-      console.log(`🔍 Comparing field "${f}": old="${oldVal}", new="${newVal}"`);
-
       if ((oldVal ?? '').toString() !== (newVal ?? '').toString()) {
         changes[f] = oldVal;
         changedFields.push(f);
       }
     });
 
-    // Services comparison
+    // Compare services
     const oldServiceIds = existingServices.map(s => Number(s.idservice)).sort();
     const newServiceIds = idservice.map(Number).sort();
-    console.log("🔍 Comparing services: old=", oldServiceIds, "new=", newServiceIds);
     if (JSON.stringify(oldServiceIds) !== JSON.stringify(newServiceIds)) {
       changes['services'] = oldServiceIds;
       changedFields.push('services');
@@ -3362,47 +3703,47 @@ app.put('/api/website/appointments/:id', async (req, res) => {
     console.log("🪵 Final changes object for logging:", changes);
     console.log("🪵 Changed fields array:", changedFields);
     console.log("🧑 Admin ID before logging:", adminId);
-// 5️⃣ Prepare undo-ready data for activity log
-const undoData = {
-  primary_key: 'idappointment',
-  table: 'appointment',
-  data: {
-    appointment: {
-      idappointment: existingAppointment.idappointment,
-      idpatient: existingAppointment.idpatient,
-      iddentist: existingAppointment.iddentist,
-      date: existingAppointment.date,
-      status: existingAppointment.status,
-      notes: existingAppointment.notes,
-      patient_name: existingAppointment.patient_name
-    },
-    appointment_services: existingServices.map(s => ({
-      idappointment: s.idappointment,
-      idservice: s.idservice
-    }))
-  }
-};
 
-    // 6️⃣ Log activity if there were changes
-  if (changedFields.length > 0) {
-  if (!adminId) console.warn("⚠️ Admin ID is missing; cannot log activity!");
-  else {
-    try {
-      await logActivity(
-        adminId,
-        'EDIT',
-        'appointment',
-        idappointment,
-        `Updated appointment ID ${idappointment} (${changedFields.join(', ')})`,
-        undoData // <-- use the correctly structured undo data
-      );
-      console.log("✅ Activity logged successfully.");
-    } catch (logErr) {
-      console.error("❌ Error logging activity:", logErr.message);
-    }
-  }
-}
- else {
+    // 6️⃣ Prepare undo-ready data
+    const undoData = {
+      primary_key: 'idappointment',
+      primary_keys: {               // ✅ supports multi-table undo
+        appointment: 'idappointment',
+        appointment_services: 'idappointment'
+      },
+      data: {
+        appointment: {
+          idappointment: existingAppointment.idappointment,
+          idpatient: existingAppointment.idpatient,
+          iddentist: existingAppointment.iddentist,
+          date: existingAppointment.date,
+          status: existingAppointment.status,
+          notes: existingAppointment.notes,
+          patient_name: existingAppointment.patient_name
+        },
+        appointment_services: existingServices.map(s => ({
+          idappointment: s.idappointment,
+          idservice: s.idservice
+        }))
+      }
+    };
+
+    // 7️⃣ Log activity if changes exist
+    if (changedFields.length > 0) {
+      if (!adminId) {
+        console.warn("⚠️ Admin ID is missing; cannot log activity!");
+      } else {
+        await logActivity(
+          adminId,
+          'EDIT',
+          'appointment',
+          idappointment,
+          `Updated appointment ID ${idappointment} (${changedFields.join(', ')})`,
+          undoData
+        );
+        console.log("✅ Activity logged successfully.");
+      }
+    } else {
       console.log("⚠️ No visible changes detected — skipping activity log");
     }
 
@@ -3418,6 +3759,7 @@ const undoData = {
     return res.status(500).json({ message: 'Error updating appointment', error: error.message });
   }
 });
+
 
 
 // ✅ Get all active patients (users with usertype = 'patient')
