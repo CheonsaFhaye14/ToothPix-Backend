@@ -566,24 +566,31 @@ app.get('/api/reports/today-appointments', async (req, res) => {
 app.get('/api/website/3dmodels', async (req, res) => {
   const query = `
     SELECT
-      r.idrecord,  
-      rm.id AS model_id,  
-      rm.before_model_url,  
-      rm.after_model_url,   
-      rm.before_uploaded_at,  
-      rm.after_uploaded_at,   
-      rm.created_at AS model_created_at,  
-      CONCAT(p.firstname, ' ', p.lastname) AS patient_name,  
-      CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,  
-      r.treatment_notes,  
-      a.date AS appointment_date  
-    FROM records r
-    JOIN users p ON r.idpatient = p.idusers AND p.is_deleted = FALSE  -- Only active patients
-    JOIN users d ON r.iddentist = d.idusers AND d.is_deleted = FALSE  -- Only active dentists
-    JOIN appointment a ON r.idappointment = a.idappointment AND a.is_deleted = FALSE  -- Only active appointments
-    LEFT JOIN dental_models rm ON rm.idrecord = r.idrecord  
-    WHERE r.idpatient IS NOT NULL AND r.is_deleted = FALSE  -- Only include active records linked to a patient
-    ORDER BY a.date DESC, rm.created_at DESC NULLS LAST;
+  r.idrecord,
+  rm.id AS model_id,
+  rm.before_model_url,
+  rm.after_model_url,
+  rm.before_uploaded_at,
+  rm.after_uploaded_at,
+  rm.created_at AS model_created_at,
+  CONCAT(p.firstname, ' ', p.lastname) AS patient_name,
+  CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
+  r.treatment_notes,
+  a.date AS appointment_date
+FROM records r
+JOIN appointment a 
+  ON r.idappointment = a.idappointment 
+  AND a.is_deleted = FALSE  -- only active appointments
+JOIN users p 
+  ON a.idpatient = p.idusers 
+  AND p.is_deleted = FALSE  -- only active patients
+JOIN users d 
+  ON a.iddentist = d.idusers 
+  AND d.is_deleted = FALSE  -- only active dentists
+LEFT JOIN dental_models rm 
+  ON rm.idrecord = r.idrecord
+WHERE r.is_deleted = FALSE  -- only active records
+ORDER BY a.date DESC, rm.created_at DESC NULLS LAST;
   `;
 
   try {
@@ -2732,7 +2739,7 @@ return res.status(200).json({ message: 'User updated successfully', user: update
   }
 });
 
-app.post('/api/activity_logs/undo/:logId', async (req, res) => {
+app.post('/api/website/activity_logs/undo/:logId', async (req, res) => {
   const logId = req.params.logId;
   const adminId = req.body.admin_id;
 
