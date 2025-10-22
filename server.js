@@ -294,10 +294,9 @@ const storage = new Storage({ keyFilename: keyFilePath });
 // This bucket ('toothpix-models') will store your uploaded files
 const bucket = storage.bucket('toothpix-models');
 
-// 📌 Route to upload "BEFORE" dental 3D model (GLTF + optional BIN)
+// 📌 PUBLIC route to upload "BEFORE" dental 3D model (GLTF + optional BIN)
 app.post(
   '/api/uploadModel/before',
-  authenticateAdmin, // ✅ Protect this route for admins only
   upload.fields([
     { name: 'gltf', maxCount: 1 },
     { name: 'bin', maxCount: 1 },
@@ -305,12 +304,19 @@ app.post(
   async (req, res) => {
     try {
       const idrecord = req.body.idrecord; // Record ID from frontend
-      const adminId = req.user.idusers; // ✅ Admin ID from token
+      if (!idrecord) {
+        return res.status(400).json({ success: false, error: 'Missing record ID' });
+      }
 
       // -------- Upload GLTF file --------
+      if (!req.files['gltf'] || req.files['gltf'].length === 0) {
+        return res.status(400).json({ success: false, error: 'GLTF file is required' });
+      }
+
       const gltfFile = req.files['gltf'][0];
       const gltfFileName = `DentalModel_${idrecord}.gltf`;
       const gltfPath = `models/${gltfFileName}`;
+
       await bucket.upload(gltfFile.path, {
         destination: gltfPath,
         contentType: 'model/gltf+json',
@@ -330,7 +336,7 @@ app.post(
         fs.unlinkSync(binFile.path);
       }
 
-      // -------- Store the file paths in PostgreSQL --------
+      // -------- Store in PostgreSQL --------
       await pool.query(
         `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
          VALUES ($1, $2, $3, NOW())
@@ -341,23 +347,20 @@ app.post(
         [idrecord, gltfPath, binPath]
       );
 
-      // -------- Log admin activity --------
-      await logActivity(
-        adminId,
-        'UPLOAD',
-        'dental_models',
-        idrecord,
-        `Uploaded BEFORE model for record ID ${idrecord}`
-      );
-
-      // ✅ Return success
-      return res.json({ success: true, gltfPath, binPath });
+      // ✅ Success response
+      return res.json({
+        success: true,
+        message: 'Before model uploaded successfully',
+        gltfPath,
+        binPath,
+      });
     } catch (err) {
-      console.error(err);
+      console.error('Upload error:', err);
       return res.status(500).json({ success: false, error: err.message });
     }
   }
 );
+
 
 // 📌 Fetch dental model for a specific record and generate temporary access URLs
 app.get('/api/app/dental_models/:idrecord', async (req, res) => {
@@ -4505,3 +4508,4 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
