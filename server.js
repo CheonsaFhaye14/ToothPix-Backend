@@ -474,6 +474,70 @@ ORDER BY
   }
 });
 
+app.post('/api/unity/dentalmodelteeth/:id', async (req, res) => {
+  const model_id = req.params.id;
+  const { teeth } = req.body;
+
+  if (!teeth || !Array.isArray(teeth) || teeth.length === 0) {
+    return res.status(400).json({ message: 'Teeth data is required.' });
+  }
+
+  try {
+    const insertQuery = `
+      INSERT INTO dental_model_teeth (model_id, tooth_number, tooth_name, status)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *;
+    `;
+
+    const inserted = [];
+    for (const tooth of teeth) {
+      const { tooth_number, tooth_name, status } = tooth;
+      const { rows } = await pool.query(insertQuery, [
+        model_id,
+        tooth_number,
+        tooth_name,
+        status,
+      ]);
+      inserted.push(rows[0]);
+    }
+
+    res.status(201).json({
+      message: 'All tooth data saved successfully',
+      count: inserted.length,
+      data: inserted,
+    });
+  } catch (error) {
+    console.error('Error inserting tooth data:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+app.get('/api/unity/dentalmodelteeth/:id', async (req, res) => {
+  const model_id = req.params.id; // ✅ get model_id from URL
+
+  try {
+    const selectQuery = `
+      SELECT id, model_id, tooth_number, tooth_name, status, created_at, updated_at
+      FROM dental_model_teeth
+      WHERE model_id = $1
+      ORDER BY tooth_number ASC;
+    `;
+
+    const { rows } = await pool.query(selectQuery, [model_id]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'No teeth records found for this model.' });
+    }
+
+    res.status(200).json({
+      message: 'Tooth records fetched successfully',
+      data: rows,
+    });
+  } catch (error) {
+    console.error('Error fetching tooth data:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 
 // API endpoint to fetch all dental records along with appointment and service details (excluding deleted entries)
 app.get('/api/reports/records', async (req, res) => {
@@ -4514,6 +4578,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
