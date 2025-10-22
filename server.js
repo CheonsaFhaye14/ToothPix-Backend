@@ -361,7 +361,6 @@ app.post(
   }
 );
 
-
 // 📌 Fetch dental model for a specific record and generate temporary access URLs
 app.get('/api/app/dental_models/:idrecord', async (req, res) => {
   const { idrecord } = req.params; // Get record ID from URL
@@ -4508,4 +4507,5 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
