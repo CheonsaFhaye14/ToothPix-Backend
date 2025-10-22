@@ -369,9 +369,10 @@ app.get('/api/app/dental_models/:idrecord', async (req, res) => {
   try {
     const result = await pool.query(query, [idrecord]);
 
-    // If no record exists, return 404
+    // If no record exists, return null model (not error)
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No model found for this idrecord' });
+      console.log(`⚠️ No model found for record ${idrecord}`);
+      return res.json({ model: null });
     }
 
     const row = result.rows[0];
@@ -391,16 +392,22 @@ app.get('/api/app/dental_models/:idrecord', async (req, res) => {
       });
     }
 
-    // Return signed URLs to frontend
+    // ✅ Return in Flutter-compatible structure
     return res.json({
-      id: row.id,
-      idrecord: row.idrecord,
-      gltfUrl: gltfSignedUrl,
-      binUrl: binSignedUrl,
+      model: {
+        id: row.id,
+        idrecord: row.idrecord,
+        gltfUrl: gltfSignedUrl,
+        binUrl: binSignedUrl,
+      },
     });
+
   } catch (err) {
-    console.error('Error fetching model:', err.message);
-    return res.status(500).json({ message: 'Error fetching model', error: err.message });
+    console.error('❌ Error fetching model:', err.message);
+    return res.status(500).json({
+      model: null,
+      error: err.message,
+    });
   }
 });
 
@@ -4507,5 +4514,6 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
