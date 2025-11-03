@@ -226,7 +226,7 @@ async function getAppointmentsAtTimes(targetDates) {
   }
 }
 
-// 🕒 Cron job to check upcoming appointments and notify logged-in users
+// 🕒  job to check upcoming appointments and notify logged-in users
 // This runs every minute to remind patients of their upcoming appointments
 cron.schedule('* * * * *', async () => {
   console.log(`[CRON] Running appointment reminder check at ${new Date().toISOString()}`);
@@ -1361,7 +1361,7 @@ ORDER BY r.idrecord DESC NULLS LAST;
   }
 });
 
-cron.schedule('*/5 * * * *', async () => {
+cron.schedule('* * * * *', async () => {
   const client = await pool.connect();
 
   try {
@@ -4578,6 +4578,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
