@@ -1371,7 +1371,7 @@ cron.schedule('* * * * *', async () => {
     const res = await client.query(`
       SELECT idappointment
       FROM appointment
-      WHERE appointment_date < NOW()
+      WHERE date < NOW()
         AND status NOT IN ('cancelled', 'completed')
     `);
 
@@ -2205,7 +2205,7 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
         idappointment: existingAppointment.idappointment,
         iddentist: existingAppointment.iddentist,
         status: existingAppointment.status,
-        appointment_date: existingAppointment.appointment_date,
+        appointment_date: existingAppointment.date,
         is_deleted: true,
         deleted_at: existingAppointment.deleted_at || new Date().toISOString()
       }
@@ -4578,6 +4578,7 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
 
