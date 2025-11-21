@@ -23,7 +23,8 @@ const PORT = process.env.APP_API_PORT || 3000;
 // List of allowed frontend URLs that can access this backend
 const allowedOrigins = [
   process.env.FRONTEND_URL,          // GitHub-hosted frontend (deployed version)
-  process.env.SECOND_FRONTEND_URL    // Local frontend (for development/testing)
+  process.env.SECOND_FRONTEND_URL,    // Local frontend (for development/testing)
+  process.env.THIRD_FRONTEND_URL 
 ];
 
 // CORS (Cross-Origin Resource Sharing) options
@@ -906,3 +907,4 @@ app.post("/api/app/register", async (req, res) => {
     });
   } catch (err) {
     console.error("Error in /register:", err.message);
+
