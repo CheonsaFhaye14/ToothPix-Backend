@@ -25,7 +25,7 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,          // GitHub-hosted frontend (deployed version)
   process.env.SECOND_FRONTEND_URL,    // Local frontend (for development/testing)
   process.env.THIRD_FRONTEND_URL 
-].filter(Boolean);
+];
 
 // CORS (Cross-Origin Resource Sharing) options
 // This controls which origins (websites) can send requests to your server
@@ -907,5 +907,6 @@ app.post("/api/app/register", async (req, res) => {
     });
   } catch (err) {
     console.error("Error in /register:", err.message);
+
 
 
