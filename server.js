@@ -23,8 +23,7 @@ const PORT = process.env.APP_API_PORT || 3000;
 // List of allowed frontend URLs that can access this backend
 const allowedOrigins = [
   process.env.FRONTEND_URL,          // GitHub-hosted frontend (deployed version)
-  process.env.SECOND_FRONTEND_URL,    // Local frontend (for development/testing)
-  process.env.THIRD_FRONTEND_URL
+  process.env.SECOND_FRONTEND_URL   // Local frontend (for development/testing)
 ];
 
 // CORS (Cross-Origin Resource Sharing) options
@@ -274,26 +273,41 @@ cron.schedule('* * * * *', async () => {
     }
   }
 });
-
 const { Storage } = require('@google-cloud/storage'); // Import Google Cloud Storage client
-const path = require('path');                         // Node.js module for working with file paths
 const multer = require('multer');                     // Middleware to handle file uploads
 const fs = require('fs');                             // Node.js module to interact with the file system
+const path = require('path');                         // Node.js module for file paths
 
 // Multer setup: store uploaded files temporarily in the "temp/" folder
 const upload = multer({ dest: 'temp/' });
 
-// Write Google Cloud service account key from environment variable to a temp file
-// This allows the Google Cloud client to authenticate
-const keyFilePath = path.join(__dirname, 'service-account.json');
-fs.writeFileSync(keyFilePath, process.env.GOOGLE_CLOUD_ACCOUNT);
+// Parse Google Cloud service account credentials from environment variable
+const credentials = JSON.parse(process.env.GOOGLE_CLOUD_ACCOUNT);
 
-// Google Cloud Storage client setup using the key file
-const storage = new Storage({ keyFilename: keyFilePath });
+// Fix private key newlines
+credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+
+// Google Cloud Storage client setup using the credentials
+const storage = new Storage({
+  projectId: credentials.project_id,
+  credentials: credentials,
+});
 
 // Reference a specific bucket in Google Cloud Storage
-// This bucket ('toothpix-models') will store your uploaded files
 const bucket = storage.bucket('toothpix-models');
+
+// Example: list files in your bucket
+async function listFiles() {
+  try {
+    const [files] = await bucket.getFiles();
+    console.log('Files in bucket:', files.map(f => f.name));
+  } catch (err) {
+    console.error('Error listing bucket files:', err);
+  }
+}
+
+listFiles();
+
 
 // 📌 PUBLIC route to upload "BEFORE" dental 3D model (GLTF + optional BIN)
 app.post(
@@ -912,17 +926,13 @@ app.post("/api/app/register", async (req, res) => {
 });
 
 // POST /api/website/login - Admin login endpoint
-app.post('/api/website/login', [
-  // Validate input: username must be at least 3 chars, password at least 6 chars
-  body('username').isLength({ min: 3 }).withMessage('Username must be at least 3 characters long'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
-], async (req, res) => {
-
-  // Check for validation errors
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-
+app.post('/api/website/login', async (req, res) => {
   const { username, password } = req.body;
+
+  // ✅ Basic input checks
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required.' });
+  }
 
   try {
     // Fetch user by username from the database
@@ -946,14 +956,13 @@ app.post('/api/website/login', [
       return res.status(400).json({ message: 'Incorrect password' });
     }
 
-    // ✅ Generate JWT token valid for 24 hours, now includes admin ID
+    // Generate JWT token valid for 24 hours
     const token = jwt.sign(
       { idusers: user.idusers, username: user.username, usertype: user.usertype },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
-
-    // ✅ Return success response with token and full admin info
+    // Return success response with token and full admin info
     return res.status(200).json({
       message: 'Admin login successful',
       token,
@@ -969,6 +978,7 @@ app.post('/api/website/login', [
     return res.status(500).json({ message: 'Error querying database' });
   }
 });
+
 
 // GET /api/admin - Fetch all admin users
 app.get('/api/admin', async (req, res) => {
@@ -3197,111 +3207,167 @@ app.post('/api/app/users', async (req, res) => {
   }
 });
 
-app.post('/api/website/users', async (req, res) => {
-  const {
-    username,
-    email,
-    password,
-    usertype,
-    firstname,
-    lastname,
-    birthdate,
-    contact,
-    address,
-    gender,
-    allergies,
-    medicalhistory,
-    adminId
-  } = req.body;
-
-  // ✅ Validation
-  if (!username || !email || !password || !usertype || !firstname || !lastname) {
-    console.error("❌ Missing required fields in request body");
-    return res.status(400).json({ message: 'Required fields missing' });
-  }
-
-  try {
-    console.log("🔍 Checking for existing username/email...");
-    const userCheck = await pool.query(
-      'SELECT * FROM users WHERE (username = $1 OR email = $2) AND is_deleted = FALSE',
-      [username, email]
-    );
-
-    if (userCheck.rows.length > 0) {
-      console.warn("⚠️ Username or email already exists");
-      return res.status(409).json({ message: 'Username or email already exists' });
-    }
-
-    console.log("🔐 Hashing password...");
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    console.log("📝 Inserting new user...");
-    const insertQuery = `
-      INSERT INTO users (
-        username, email, password, usertype, firstname, lastname,
-        birthdate, contact, address, gender, allergies, medicalhistory
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      RETURNING *;
-    `;
-    const values = [
-      username,
-      email,
-      hashedPassword,
-      usertype,
-      firstname,
-      lastname,
-      birthdate,
-      contact,
-      address,
-      gender,
-      allergies,
-      medicalhistory,
-    ];
-
-    const result = await pool.query(insertQuery, values);
-    const newUser = result.rows[0];
-    console.log("✅ User inserted successfully:", newUser.username);
-
-    // 🧾 Log admin activity
+app.post(
+  '/api/website/users',
+  upload.fields([{ name: 'profile_image', maxCount: 1 }]),
+  async (req, res) => {
     try {
-      console.log("🪵 Logging admin activity...");
-   await logActivity(
-  adminId || null,
-  'ADD',
-  'users',
-  newUser.idusers,
-  `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
-  {
-    primary_key: 'idusers',
-    table: 'users', // ✅ add table name for uniformity
-    data: {
-      idusers: newUser.idusers,
-      username: newUser.username,
-      email: newUser.email,
-      usertype: newUser.usertype
+      const {
+        username,
+        email,
+        password,
+        usertype,
+        firstname,
+        lastname,
+        birthdate,
+        contact,
+        address,
+        gender,
+        allergies,
+        medicalhistory,
+        adminId
+      } = req.body;
+
+      // -----------------------------
+      // Required fields validation
+      // -----------------------------
+      if (!username || !email || !password || !usertype || !firstname || !lastname) {
+        console.error("❌ Missing required fields:", req.body);
+        return res.status(400).json({ message: 'Required fields missing' });
+      }
+
+      // -----------------------------
+      // Check if user already exists
+      // -----------------------------
+      const userCheck = await pool.query(
+        'SELECT * FROM users WHERE (username = $1 OR email = $2) AND is_deleted = FALSE',
+        [username, email]
+      );
+      if (userCheck.rows.length > 0) {
+        console.warn("⚠️ Username or email already exists:", username, email);
+        return res.status(409).json({ message: 'Username or email already exists' });
+      }
+
+      // -----------------------------
+      // Hash password
+      // -----------------------------
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // -----------------------------
+      // Handle profile image upload (optional)
+      // -----------------------------
+      let profileImagePath = null;
+      const profileFiles = req.files['profile_image'];
+
+      if (profileFiles && profileFiles.length > 0) {
+        const file = profileFiles[0];
+        console.log("📸 Profile image received:", {
+          originalName: file.originalname,
+          size: file.size,
+          type: file.mimetype,
+          path: file.path
+        });
+
+        try {
+          // Construct path in Google Cloud bucket
+          const fileName = `profiles/Profile_${username}_${Date.now()}${path.extname(file.originalname)}`;
+          profileImagePath = fileName;
+
+          console.log("⬆️ Uploading profile image to bucket at:", profileImagePath);
+
+          // Upload directly to Google Cloud Storage
+          await bucket.upload(file.path, {
+            destination: profileImagePath,
+            contentType: file.mimetype,
+          });
+
+          console.log("✅ Profile image uploaded successfully");
+
+          // Remove temp file
+          fs.unlinkSync(file.path);
+        } catch (fileError) {
+          console.error("❌ Error uploading profile image:", fileError);
+          return res.status(500).json({
+            message: 'Error uploading profile image',
+            error: fileError.message
+          });
+        }
+      } else {
+        console.log("ℹ️ No profile image provided, continuing without it.");
+      }
+
+      // -----------------------------
+      // Insert new user
+      // -----------------------------
+      const insertQuery = `
+        INSERT INTO users (
+          username, email, password, usertype, firstname, lastname,
+          birthdate, contact, address, gender, allergies, medicalhistory, profile_image
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        RETURNING *;
+      `;
+      const values = [
+        username,
+        email,
+        hashedPassword,
+        usertype,
+        firstname,
+        lastname,
+        birthdate || null,
+        contact || null,
+        address || null,
+        gender || null,
+        allergies || null,
+        medicalhistory || null,
+        profileImagePath || null
+      ];
+
+      const result = await pool.query(insertQuery, values);
+      const newUser = result.rows[0];
+
+      // -----------------------------
+      // Log admin activity
+      // -----------------------------
+      try {
+        await logActivity(
+          adminId || null,
+          'ADD',
+          'users',
+          newUser.idusers,
+          `Added new ${usertype} user: ${firstname} ${lastname} (username: ${username})`,
+          {
+            primary_key: 'idusers',
+            table: 'users',
+            data: {
+              idusers: newUser.idusers,
+              username: newUser.username,
+              email: newUser.email,
+              usertype: newUser.usertype
+            }
+          }
+        );
+      } catch (logError) {
+        console.error("❌ Error logging admin activity:", logError);
+      }
+
+      // -----------------------------
+      // Return success
+      // -----------------------------
+      return res.status(201).json({
+        message: 'User created successfully',
+        user: newUser,
+        profileImage: profileImagePath
+      });
+
+    } catch (error) {
+      console.error("❌ Error adding user:", error);
+      if (error.code === '23505') {
+        return res.status(409).json({ message: 'Username or email already exists' });
+      }
+      return res.status(500).json({ message: 'Error adding user', error: error.message });
     }
   }
 );
-
-      console.log("✅ Activity logged successfully");
-    } catch (logError) {
-      console.error("❌ Error logging admin activity:", logError);
-    }
-
-    return res.status(201).json({
-      message: 'User created successfully',
-      user: newUser,
-    });
-
-  } catch (error) {
-    if (error.code === '23505') {
-      console.warn("⚠️ Duplicate entry detected:", error.detail);
-      return res.status(409).json({ message: 'Username or email already exists' });
-    }
-    console.error("❌ Error adding user:", error);
-    return res.status(500).json({ message: 'Error adding user', error: error.message });
-  }
-});
 
 app.get('/api/app/appointments/search', async (req, res) => { 
   const { dentist, patient, startDate, endDate } = req.query;
@@ -4116,31 +4182,82 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 
 // Route to add a new service
 app.post('/api/website/services', async (req, res) => {
-  const { name, description, price, category, adminId } = req.body;
+  // Convert array of key-value pairs to object if needed
+  const body = Array.isArray(req.body)
+    ? Object.fromEntries(req.body)
+    : req.body;
+
+  let {
+    name,
+    description,
+    price,
+    category,
+    adminId,
+    allow_installment,
+    installment_times,
+    installment_interval,
+    custom_interval_days
+  } = body;
+
+  // Convert strings to proper types
+  price = price !== undefined ? parseFloat(price) : undefined;
+  allow_installment = allow_installment === 'true' || allow_installment === true;
+  installment_times = installment_times !== undefined ? Number(installment_times) : undefined;
+  custom_interval_days = custom_interval_days !== undefined ? Number(custom_interval_days) : undefined;
 
   // ✅ Validate inputs
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
+
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
+
   if (!category || typeof category !== 'string' || category.trim().length === 0) {
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
+  }
+
+  // Validate installment fields
+  if (allow_installment) {
+    if (installment_times === undefined || isNaN(installment_times)) {
+      return res.status(400).json({ message: 'Installment Count is required and must be a number.' });
+    }
+    if (!Number.isInteger(installment_times) || installment_times < 1) {
+      return res.status(400).json({ message: 'Installment Count must be a positive whole number.' });
+    }
+
+    if (!installment_interval || typeof installment_interval !== 'string') {
+      return res.status(400).json({ message: 'Installment Interval is required.' });
+    }
+
+    if (installment_interval === 'custom') {
+      if (!custom_interval_days || isNaN(custom_interval_days) || custom_interval_days < 1) {
+        return res.status(400).json({ message: 'Custom Interval Days must be a positive number.' });
+      }
+    }
   }
 
   try {
     console.log('📝 Inserting new service...');
     const insertQuery = `
-      INSERT INTO service (name, description, price, category)
-      VALUES ($1, $2, $3, $4)
-      RETURNING idservice, name, description, price, category
+      INSERT INTO service (
+        name, description, price, category, allow_installment,
+        installment_times, installment_interval, custom_interval_days
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING idservice, name, description, price, category,
+                allow_installment, installment_times, installment_interval, custom_interval_days
     `;
+
     const result = await pool.query(insertQuery, [
       name.trim(),
       description || null,
-      parseFloat(price),
-      category.trim()
+      price,
+      category.trim(),
+      allow_installment,
+      allow_installment ? installment_times : null,
+      allow_installment ? installment_interval : null,
+      allow_installment && installment_interval === 'custom' ? custom_interval_days : null
     ]);
 
     const service = result.rows[0];
@@ -4148,32 +4265,24 @@ app.post('/api/website/services', async (req, res) => {
 
     // 🧾 Log admin activity
     try {
-      console.log('🪵 Logging admin activity for service addition...');
-  const primaryKey = 'idservice';
-await logActivity(
-  adminId || null,
-  'ADD',
-  'service',
-  service.idservice,
-  `Added new service: ${service.name} (${service.category})`,
-  {
-    primary_key: 'idservice',
-    table: 'service',
-    data: {
-      idservice: service.idservice,
-      name: service.name,
-      description: service.description,
-      price: service.price,
-      category: service.category
-    }
-  }
-);
+      await logActivity(
+        adminId || null,
+        'ADD',
+        'service',
+        service.idservice,
+        `Added new service: ${service.name} (${service.category})`,
+        {
+          primary_key: 'idservice',
+          table: 'service',
+          data: service
+        }
+      );
       console.log('✅ Activity logged successfully for service ID:', service.idservice);
     } catch (logError) {
       console.error('❌ Error logging admin activity:', logError);
     }
 
-    // 🔔 Send notifications to users with FCM tokens
+    // 🔔 Send notifications
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
     const tokens = tokensResult.rows.map(r => r.fcm_token).filter(t => t && t.trim().length > 0);
 
@@ -4219,6 +4328,7 @@ await logActivity(
     return res.status(500).json({ message: 'Failed to add service or notify users', error: err.message });
   }
 });
+
 
 // Get all services route (excluding soft-deleted ones)
 app.get('/api/app/services', async (req, res) => {
