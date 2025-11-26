@@ -4181,11 +4181,16 @@ app.post('/api/app/profile', authenticateToken, async (req, res) => {
 });
 
 // Route to add a new service
-app.post('/api/website/services', async (req, res) => {
+app.post('/api/website/services', upload.none(), async (req, res) => {
+  console.log("\n====================== 📥 NEW SERVICE REQUEST RECEIVED ======================");
+  console.log("📦 Raw req.body:", req.body);
+
   // Convert array of key-value pairs to object if needed
   const body = Array.isArray(req.body)
     ? Object.fromEntries(req.body)
     : req.body;
+
+  console.log("🗂 Converted body object:", body);
 
   let {
     name,
@@ -4199,47 +4204,73 @@ app.post('/api/website/services', async (req, res) => {
     custom_interval_days
   } = body;
 
+  console.log("🔍 Extracted fields BEFORE conversion:", {
+    name, description, price, category, adminId,
+    allow_installment, installment_times,
+    installment_interval, custom_interval_days
+  });
+
   // Convert strings to proper types
   price = price !== undefined ? parseFloat(price) : undefined;
   allow_installment = allow_installment === 'true' || allow_installment === true;
   installment_times = installment_times !== undefined ? Number(installment_times) : undefined;
   custom_interval_days = custom_interval_days !== undefined ? Number(custom_interval_days) : undefined;
 
-  // ✅ Validate inputs
+  console.log("🔄 Converted fields AFTER type conversion:", {
+    name, description, price, category, adminId,
+    allow_installment, installment_times,
+    installment_interval, custom_interval_days
+  });
+
+  console.log("🧪 Starting validation...");
+
+  // VALIDATIONS
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    console.log("❌ Validation failed: Invalid name");
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
 
   if (price === undefined || isNaN(price)) {
+    console.log("❌ Validation failed: Invalid price");
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
   if (!category || typeof category !== 'string' || category.trim().length === 0) {
+    console.log("❌ Validation failed: Invalid category");
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
   }
 
-  // Validate installment fields
   if (allow_installment) {
+    console.log("📌 Validating installment fields...");
+
     if (installment_times === undefined || isNaN(installment_times)) {
+      console.log("❌ installment_times missing/invalid");
       return res.status(400).json({ message: 'Installment Count is required and must be a number.' });
     }
+
     if (!Number.isInteger(installment_times) || installment_times < 1) {
+      console.log("❌ installment_times not a positive whole number");
       return res.status(400).json({ message: 'Installment Count must be a positive whole number.' });
     }
 
     if (!installment_interval || typeof installment_interval !== 'string') {
+      console.log("❌ installment_interval missing/invalid");
       return res.status(400).json({ message: 'Installment Interval is required.' });
     }
 
     if (installment_interval === 'custom') {
+      console.log("📌 Validating custom_interval_days...");
+
       if (!custom_interval_days || isNaN(custom_interval_days) || custom_interval_days < 1) {
+        console.log("❌ custom_interval_days invalid");
         return res.status(400).json({ message: 'Custom Interval Days must be a positive number.' });
       }
     }
   }
 
+  console.log("✅ Validation passed. Proceeding to DB insertion...");
+
   try {
-    console.log('📝 Inserting new service...');
     const insertQuery = `
       INSERT INTO service (
         name, description, price, category, allow_installment,
@@ -4249,7 +4280,7 @@ app.post('/api/website/services', async (req, res) => {
                 allow_installment, installment_times, installment_interval, custom_interval_days
     `;
 
-    const result = await pool.query(insertQuery, [
+    const insertValues = [
       name.trim(),
       description || null,
       price,
@@ -4258,13 +4289,19 @@ app.post('/api/website/services', async (req, res) => {
       allow_installment ? installment_times : null,
       allow_installment ? installment_interval : null,
       allow_installment && installment_interval === 'custom' ? custom_interval_days : null
-    ]);
+    ];
 
+    console.log("📤 Inserting into DB with values:", insertValues);
+
+    const result = await pool.query(insertQuery, insertValues);
     const service = result.rows[0];
-    console.log('✅ Service added:', service);
 
-    // 🧾 Log admin activity
+    console.log("✅ Service added successfully:", service);
+
+    // Log admin activity
     try {
+      console.log("📝 Logging admin activity for adminId:", adminId);
+
       await logActivity(
         adminId || null,
         'ADD',
@@ -4277,18 +4314,28 @@ app.post('/api/website/services', async (req, res) => {
           data: service
         }
       );
-      console.log('✅ Activity logged successfully for service ID:', service.idservice);
+
+      console.log("📘 Admin activity logged.");
     } catch (logError) {
-      console.error('❌ Error logging admin activity:', logError);
+      console.error("❌ Error logging admin activity:", logError);
     }
 
-    // 🔔 Send notifications
+    // Notifications
+    console.log("🔔 Checking for users with FCM tokens...");
+
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
     const tokens = tokensResult.rows.map(r => r.fcm_token).filter(t => t && t.trim().length > 0);
 
+    console.log(`📊 Found ${tokens.length} tokens.`);
+
     if (tokens.length === 0) {
-      console.log('⚠️ No users with FCM tokens.');
-      return res.status(201).json({ message: 'Service added successfully', service, notificationSent: false });
+      console.log("⚠️ No users with FCM tokens.");
+
+      return res.status(201).json({
+        message: 'Service added successfully',
+        service,
+        notificationSent: false
+      });
     }
 
     const notificationPayload = {
@@ -4300,20 +4347,30 @@ app.post('/api/website/services', async (req, res) => {
       android: { notification: { channelId: 'appointment_channel_id', priority: 'high' } }
     };
 
+    console.log("📨 Sending FCM notifications...");
+
     const MAX_BATCH = 500;
     let totalSuccess = 0;
 
     for (let i = 0; i < tokens.length; i += MAX_BATCH) {
       const batch = tokens.slice(i, i + MAX_BATCH);
-      const multicastMessage = { tokens: batch, ...notificationPayload };
-      const response = await admin.messaging().sendEachForMulticast(multicastMessage);
+
+      console.log(`📦 Sending batch ${i / MAX_BATCH + 1}: ${batch.length} tokens`);
+
+      const response = await admin.messaging().sendEachForMulticast({
+        tokens: batch,
+        ...notificationPayload
+      });
 
       totalSuccess += response.successCount;
       console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes`);
+
       response.responses.forEach((resp, idx) => {
         if (!resp.success) console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
       });
     }
+
+    console.log("🎉 Notification sending complete.");
 
     return res.status(201).json({
       message: 'Service added and notifications sent successfully',
@@ -4324,10 +4381,14 @@ app.post('/api/website/services', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Error adding service or sending notifications:', err.stack);
-    return res.status(500).json({ message: 'Failed to add service or notify users', error: err.message });
+    console.error("❌ FATAL ERROR:", err.stack);
+    return res.status(500).json({
+      message: 'Failed to add service or notify users',
+      error: err.message
+    });
   }
 });
+
 
 
 // Get all services route (excluding soft-deleted ones)
@@ -4716,10 +4777,24 @@ cron.schedule('0 * * * *', async () => { // every hour at minute 0
 app.get('/api/website/activity_logs', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT al.*, u.username AS admin_username
-       FROM activity_logs al
-       LEFT JOIN users u ON al.admin_id = u.idusers
-       ORDER BY al.created_at DESC`
+      `SELECT 
+    al.*,
+
+    -- Build clean full name
+    CASE
+        WHEN u.firstname IS NOT NULL AND u.lastname IS NOT NULL THEN 
+            CONCAT(u.firstname, ' ', u.lastname)
+        WHEN u.firstname IS NOT NULL THEN 
+            u.firstname
+        WHEN u.lastname IS NOT NULL THEN 
+            u.lastname
+        ELSE 
+            u.username
+    END AS "adminName"
+
+FROM activity_logs al
+LEFT JOIN users u ON al.admin_id = u.idusers
+ORDER BY al.created_at DESC`
     );
 
     if (result.rows.length === 0) {
@@ -4729,9 +4804,13 @@ app.get('/api/website/activity_logs', async (req, res) => {
     return res.status(200).json({
       records: result.rows
     });
+
   } catch (err) {
     console.error('Error fetching activity logs:', err.message);
-    return res.status(500).json({ message: 'Error fetching activity logs', error: err.message });
+    return res.status(500).json({
+      message: 'Error fetching activity logs',
+      error: err.message
+    });
   }
 });
 
