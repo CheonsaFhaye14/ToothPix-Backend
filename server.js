@@ -2375,7 +2375,7 @@ app.get('/api/website/payment', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // STEP 1: Insert missing records for past appointments (if any), only for non-deleted appointments
+    // STEP 1: Insert missing records for past appointments
     const insertMissingRecordsQuery = `
       INSERT INTO records (idappointment)
       SELECT a.idappointment
@@ -2387,10 +2387,22 @@ app.get('/api/website/payment', async (req, res) => {
     `;
     await client.query(insertMissingRecordsQuery);
 
-    // STEP 2: Fetch payment-related appointment data
+    // STEP 2: Pre-aggregate installment payments
     const paymentQuery = `
+      WITH installment_totals AS (
+        SELECT 
+          ip.idrecord,
+          aps.idservice,
+          COALESCE(SUM(ip.amount),0) AS paid_amount
+        FROM installment_payments ip
+        JOIN appointment_services aps 
+          ON aps.idappointment = (SELECT idappointment FROM records WHERE idrecord = ip.idrecord)
+          AND aps.idservice = ip.idservice
+        GROUP BY ip.idrecord, aps.idservice
+      )
       SELECT
         a.idappointment,
+        r.idrecord,  -- <--- include record ID here
         a.date,
         CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
         CASE
@@ -2398,21 +2410,53 @@ app.get('/api/website/payment', async (req, res) => {
             THEN CONCAT(p.firstname, ' ', p.lastname)
           ELSE a.patient_name
         END AS patient_name,
-        STRING_AGG(s.name || ' ' || s.price, ', ') AS services_with_prices,
+        JSON_AGG(
+          JSON_BUILD_OBJECT(
+            'name', s.name,
+            'price', s.price,
+            'allow_installment', s.allow_installment,
+            'installment_times', s.installment_times,
+            'installment_detail',
+              CASE 
+                WHEN s.allow_installment THEN 
+                  s.name || ': ₱' || ROUND((s.price / s.installment_times)::numeric,2) 
+                  || ' per month x ' || s.installment_times || ' months'
+                ELSE NULL
+              END,
+            'paid_amount', COALESCE(it.paid_amount,
+                             CASE WHEN r.total_paid >= s.price THEN s.price ELSE r.total_paid END),
+            'due_dates',
+              CASE 
+                WHEN s.allow_installment THEN (
+                  SELECT JSON_AGG(
+                    TO_CHAR(a.date + ((g.i - 1) || ' month')::interval, 'YYYY-MM-DD')
+                  )
+                  FROM generate_series(1, s.installment_times) g(i)
+                )
+                ELSE NULL
+              END
+          )
+          ORDER BY s.name
+        ) AS services,
         SUM(s.price) AS total_price,
         r.paymentstatus,
         COALESCE(r.total_paid, 0) AS total_paid,
-        (SUM(s.price) - COALESCE(r.total_paid, 0)) AS still_owe
+        (SUM(s.price) - COALESCE(r.total_paid, 0)) AS still_owe,
+        BOOL_OR(s.allow_installment) AS has_installment
       FROM appointment a
       LEFT JOIN users p ON a.idpatient = p.idusers
       JOIN users d ON a.iddentist = d.idusers
       JOIN appointment_services aps ON a.idappointment = aps.idappointment
       JOIN service s ON aps.idservice = s.idservice AND s.is_deleted = FALSE
       JOIN records r ON r.idappointment = a.idappointment AND r.is_deleted = FALSE
+      LEFT JOIN installment_totals it 
+        ON it.idrecord = r.idrecord AND it.idservice = s.idservice
       WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
         AND a.is_deleted = FALSE
+        AND r.paymentstatus <> 'paid'
       GROUP BY 
         a.idappointment, 
+        r.idrecord,  -- <--- include in GROUP BY
         a.date, 
         d.firstname, d.lastname,
         p.firstname, p.lastname, p.idusers, p.is_deleted,
@@ -2427,7 +2471,7 @@ app.get('/api/website/payment', async (req, res) => {
     await client.query('COMMIT');
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No payment records found' });
+      return res.status(404).json({ message: 'No unpaid/partial payment records found' });
     }
 
     return res.status(200).json({
@@ -2447,145 +2491,159 @@ app.get('/api/website/payment', async (req, res) => {
   }
 });
 
-// ✅ Route to update payment details for a record (verbose logs)
 app.put('/api/website/payment/:id', async (req, res) => {
-  const { id } = req.params; // appointment ID
-  const adminId = req.body.admin_id;
-  const { total_paid, total_price } = req.body;
+  const { id } = req.params;
+  const { admin_id: adminId, installment_number, amount } = req.body;
 
-  console.log(`📥 Incoming request to update payment for appointment ID: ${id}, adminId: ${adminId}`);
-  console.log('💰 Payload:', { total_paid, total_price });
+  console.log(`[PAYMENT] Request received for appointment ${id} by admin ${adminId}`);
+  console.log(`[PAYMENT] Body:`, { installment_number, amount });
 
-  // ✅ Validate total_paid
-  if (total_paid === undefined || isNaN(total_paid) || total_paid < 0) {
-    console.warn('⚠️ Invalid total_paid value detected:', total_paid);
-    return res.status(400).json({ message: 'Invalid total_paid amount.' });
+  if (!adminId) {
+    console.warn(`[PAYMENT] Missing admin_id for appointment ${id}`);
+    return res.status(400).json({ message: "Missing admin_id." });
   }
 
-  // ✅ Validate total_price
-  if (total_price === undefined || isNaN(total_price) || total_price <= 0) {
-    console.warn('⚠️ Invalid total_price value detected:', total_price);
-    return res.status(400).json({ message: 'Invalid total_price amount.' });
-  }
+  const parsedInstallmentNumber = installment_number !== undefined ? parseInt(installment_number, 10) : undefined;
+  const parsedAmount = amount !== undefined ? parseFloat(amount) : undefined;
 
-  // ✅ Determine payment status
-  let paymentstatus;
-  if (parseFloat(total_paid) === 0) {
-    paymentstatus = 'unpaid';
-  } else if (parseFloat(total_paid) < parseFloat(total_price)) {
-    paymentstatus = 'partial';
-  } else {
-    paymentstatus = 'paid';
+  console.log(`[PAYMENT] Parsed values → installment_number: ${parsedInstallmentNumber}, amount: ${parsedAmount}`);
+
+  if ((parsedInstallmentNumber !== undefined || parsedAmount !== undefined) &&
+      (isNaN(parsedInstallmentNumber) || isNaN(parsedAmount) || parsedInstallmentNumber < 1 || parsedAmount <= 0)) {
+    console.warn(`[PAYMENT] Invalid installment_number or amount for appointment ${id}`);
+    return res.status(400).json({ message: "Invalid installment_number or amount." });
   }
-  console.log(`📝 Determined payment status: ${paymentstatus}`);
 
   const client = await pool.connect();
 
   try {
-    console.log('🔍 Fetching existing record from records table...');
-    const recordResult = await client.query(
-      'SELECT * FROM records WHERE idappointment = $1 AND is_deleted = FALSE',
+    await client.query('BEGIN');
+    console.log(`[PAYMENT] Transaction started for appointment ${id}`);
+
+    // Fetch existing record
+    const recordRes = await client.query(
+      `SELECT r.*, a.date AS appointment_date
+       FROM records r
+       JOIN appointment a ON a.idappointment = r.idappointment
+       WHERE r.idappointment = $1 AND r.is_deleted = FALSE`,
       [id]
     );
-
-    if (recordResult.rows.length === 0) {
-      console.warn('⚠️ Record not found or already deleted.');
-      return res.status(404).json({ message: 'Record not found or deleted.' });
+    if (recordRes.rows.length === 0) {
+      console.warn(`[PAYMENT] No record found or deleted for appointment ${id}`);
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Record not found or deleted." });
     }
 
-    const existingRecord = recordResult.rows[0];
-    console.log('📝 Existing record fetched:', existingRecord);
+    const record = recordRes.rows[0];
+    console.log(`[PAYMENT] Found record:`, record);
 
-    // 2️⃣ Update record
-    console.log('✏️ Updating record...');
-    const updateQuery = `
-      UPDATE records
-      SET total_paid = $1, paymentstatus = $2, updated_at = NOW()
-      WHERE idappointment = $3
-      RETURNING idrecord, idappointment, total_paid, paymentstatus
-    `;
-    const updateResult = await client.query(updateQuery, [total_paid, paymentstatus, id]);
-    const updatedRecord = updateResult.rows[0];
-    console.log('✅ Record updated:', updatedRecord);
+    const appointmentDate = new Date(record.appointment_date);
 
-    // 3️⃣ Compare fields for changes (for undo)
-    const changes = {}; // only include changed fields
-    const changedFields = []; // for description
-
-    ['total_paid', 'paymentstatus'].forEach(field => {
-  if (existingRecord[field]?.toString() !== updatedRecord[field]?.toString()) {
-    // ✅ convert total_paid to number for undoData
-    changes[field] = field === 'total_paid' ? parseFloat(existingRecord[field]) : existingRecord[field]; 
-    changedFields.push(field);
-    console.log(`✏️ Field changed: ${field}, old: ${existingRecord[field]}, new: ${updatedRecord[field]}`);
-  }
-});
-
-
-   // 4️⃣ Log activity if changes exist
-if (changedFields.length > 0) {
-  try {
-    // 🔹 Existing EDIT log
-    await logActivity(
-      adminId || null,
-      'EDIT',
-      'payment',
-      id,
-      `Updated payment for appointment ID ${id} (fields: ${changedFields.join(', ')})`,
-      { primary_key: 'idrecord', table: 'records', data: changes }
+    // ✅ Fixed services query
+    const servicesRes = await client.query(
+      `SELECT s.idservice, s.name, s.price, s.allow_installment, s.installment_times,
+              COALESCE(SUM(ip.amount),0) AS paid_amount
+       FROM appointment_services aps
+       JOIN service s ON s.idservice = aps.idservice AND s.is_deleted = FALSE
+       JOIN records r ON r.idappointment = aps.idappointment
+       LEFT JOIN installment_payments ip ON ip.idrecord = r.idrecord AND ip.idservice = s.idservice
+       WHERE aps.idappointment = $1
+       GROUP BY s.idservice, s.name, s.price, s.allow_installment, s.installment_times`,
+      [id]
     );
-    console.log('🪵 Activity logged successfully for payment update.');
+    console.log(`[PAYMENT] Services fetched for appointment ${id}:`, servicesRes.rows);
 
-    // 🔹 Additional log for "PAY" action if fully paid
-    if (paymentstatus === 'paid') {
-   const payUndoData = {
-  primary_key: 'idrecord',
-  table: 'records',
-  data: { 
-    idrecord: existingRecord.idrecord, // ✅ add this
-    total_paid: parseFloat(existingRecord.total_paid), 
-    paymentstatus: existingRecord.paymentstatus 
-  }
-};
+    let newTotalPaid = 0;
 
+    for (const svc of servicesRes.rows) {
+      console.log(`[PAYMENT] Processing service ${svc.idservice} (${svc.name})`);
+      if (!svc.allow_installment) {
+        newTotalPaid += parseFloat(svc.price);
+        console.log(`[PAYMENT] Non-installment service → added full price ${svc.price}`);
+      } else {
+        const monthlyPrice = parseFloat(svc.price) / svc.installment_times;
+        const firstInstallmentDueDate = new Date(appointmentDate);
+        const today = new Date();
 
-      await logActivity(
-        adminId || null,
-        'PAY',
-        'payment',
-        id,
-        `Marked appointment ID ${id} as PAID`,
-        payUndoData
-      );
-      console.log('💳 PAY activity logged successfully');
+        if (svc.paid_amount < monthlyPrice && today >= firstInstallmentDueDate) {
+          newTotalPaid += monthlyPrice;
+          console.log(`[PAYMENT] First installment due → added ${monthlyPrice}`);
+        }
+
+        if (parsedInstallmentNumber !== undefined && parsedAmount !== undefined) {
+          newTotalPaid += parsedAmount;
+          console.log(`[PAYMENT] Adding custom installment #${parsedInstallmentNumber} amount ${parsedAmount}`);
+          await client.query(
+            `INSERT INTO installment_payments (idrecord, installment_number, amount, admin_id, paid_at, idservice)
+             VALUES ($1, $2, $3, $4, NOW(), $5)
+             ON CONFLICT (idrecord, installment_number)
+             DO UPDATE SET amount = EXCLUDED.amount, admin_id = EXCLUDED.admin_id, paid_at = NOW(), idservice = EXCLUDED.idservice`,
+            [record.idrecord, parsedInstallmentNumber, parsedAmount, adminId, svc.idservice]
+          );
+          console.log(`[PAYMENT] Installment payment recorded/updated`);
+        }
+      }
     }
 
-  } catch (logErr) {
-    console.error('❌ Error logging activity:', logErr.message);
-  }
-} else {
-  console.log('⚠️ No changes detected, skipping activity log.');
-}
+    const priceRes = await client.query(
+      `SELECT COALESCE(SUM(s.price),0) AS total_price
+       FROM appointment_services aps
+       JOIN service s ON s.idservice = aps.idservice AND s.is_deleted = FALSE
+       WHERE aps.idappointment = $1`,
+      [id]
+    );
+    const totalPrice = parseFloat(priceRes.rows[0].total_price) || 0;
+    console.log(`[PAYMENT] Total appointment price: ${totalPrice}, newTotalPaid: ${newTotalPaid}`);
 
-    // ✅ Return success
-    console.log('📤 Sending response to client...');
-    return res.status(200).json({
-      message: 'Payment updated successfully',
-      updatedRecord
+    if (newTotalPaid > totalPrice) {
+      console.warn(`[PAYMENT] Overpayment detected → capping at ${totalPrice}`);
+      newTotalPaid = totalPrice;
+    }
+
+    let paymentStatus = 'unpaid';
+    if (newTotalPaid > 0 && newTotalPaid < totalPrice) paymentStatus = 'partial';
+    else if (newTotalPaid >= totalPrice) paymentStatus = 'paid';
+    console.log(`[PAYMENT] Payment status determined: ${paymentStatus}`);
+
+    const updateRes = await client.query(
+      `UPDATE records
+       SET total_paid = $1, paymentstatus = $2, updated_at = NOW()
+       WHERE idrecord = $3
+       RETURNING idrecord, idappointment, total_paid, paymentstatus`,
+      [newTotalPaid, paymentStatus, record.idrecord]
+    );
+    const updatedRecord = updateRes.rows[0];
+    console.log(`[PAYMENT] Record updated:`, updatedRecord);
+
+    const changedFields = [];
+    ['total_paid', 'paymentstatus'].forEach(field => {
+      if (String(record[field]) !== String(updatedRecord[field])) changedFields.push(field);
     });
+
+    if (changedFields.length > 0) {
+      console.log(`[PAYMENT] Changed fields: ${changedFields.join(', ')}`);
+      const undoData = {
+        primary_key: 'idrecord',
+        table: 'records',
+        data: { idrecord: record.idrecord, total_paid: parseFloat(record.total_paid), paymentstatus: record.paymentstatus }
+      };
+      await logActivity(adminId, 'PAY', 'payment', id, `Payment update for appointment ID ${id} (fields: ${changedFields.join(', ')})`, undoData);
+      console.log(`[PAYMENT] Activity logged for appointment ${id}`);
+    }
+
+    await client.query('COMMIT');
+    console.log(`[PAYMENT] Transaction committed for appointment ${id}`);
+    return res.status(200).json({ message: "Payment updated successfully", updatedRecord });
 
   } catch (err) {
-    console.error('💥 Unexpected error updating payment:', err.message);
-    return res.status(500).json({
-      message: 'Error updating payment',
-      error: err.message
-    });
+    await client.query('ROLLBACK');
+    console.error(`[PAYMENT] Error updating payment for appointment ${id}:`, err.message);
+    return res.status(500).json({ message: "Error updating payment", error: err.message });
   } finally {
     client.release();
-    console.log('🔒 Database connection released.');
+    console.log(`[PAYMENT] Connection released for appointment ${id}`);
   }
 });
-
 
 app.get('/appointment-services/:idappointment', async (req, res) => {
   const { idappointment } = req.params;
@@ -4232,7 +4290,6 @@ app.post('/api/website/services', upload.none(), async (req, res) => {
   console.log("\n====================== 📥 NEW SERVICE REQUEST RECEIVED ======================");
   console.log("📦 Raw req.body:", req.body);
 
-  // Convert array of key-value pairs to object if needed
   const body = Array.isArray(req.body)
     ? Object.fromEntries(req.body)
     : req.body;
@@ -4246,72 +4303,46 @@ app.post('/api/website/services', upload.none(), async (req, res) => {
     category,
     adminId,
     allow_installment,
-    installment_times,
-    installment_interval,
-    custom_interval_days
+    installment_times
   } = body;
 
   console.log("🔍 Extracted fields BEFORE conversion:", {
     name, description, price, category, adminId,
-    allow_installment, installment_times,
-    installment_interval, custom_interval_days
+    allow_installment, installment_times
   });
 
   // Convert strings to proper types
   price = price !== undefined ? parseFloat(price) : undefined;
   allow_installment = allow_installment === 'true' || allow_installment === true;
   installment_times = installment_times !== undefined ? Number(installment_times) : undefined;
-  custom_interval_days = custom_interval_days !== undefined ? Number(custom_interval_days) : undefined;
 
   console.log("🔄 Converted fields AFTER type conversion:", {
     name, description, price, category, adminId,
-    allow_installment, installment_times,
-    installment_interval, custom_interval_days
+    allow_installment, installment_times
   });
 
   console.log("🧪 Starting validation...");
 
   // VALIDATIONS
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    console.log("❌ Validation failed: Invalid name");
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
 
   if (price === undefined || isNaN(price)) {
-    console.log("❌ Validation failed: Invalid price");
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
   if (!category || typeof category !== 'string' || category.trim().length === 0) {
-    console.log("❌ Validation failed: Invalid category");
     return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
   }
 
   if (allow_installment) {
-    console.log("📌 Validating installment fields...");
-
     if (installment_times === undefined || isNaN(installment_times)) {
-      console.log("❌ installment_times missing/invalid");
       return res.status(400).json({ message: 'Installment Count is required and must be a number.' });
     }
 
     if (!Number.isInteger(installment_times) || installment_times < 1) {
-      console.log("❌ installment_times not a positive whole number");
       return res.status(400).json({ message: 'Installment Count must be a positive whole number.' });
-    }
-
-    if (!installment_interval || typeof installment_interval !== 'string') {
-      console.log("❌ installment_interval missing/invalid");
-      return res.status(400).json({ message: 'Installment Interval is required.' });
-    }
-
-    if (installment_interval === 'custom') {
-      console.log("📌 Validating custom_interval_days...");
-
-      if (!custom_interval_days || isNaN(custom_interval_days) || custom_interval_days < 1) {
-        console.log("❌ custom_interval_days invalid");
-        return res.status(400).json({ message: 'Custom Interval Days must be a positive number.' });
-      }
     }
   }
 
@@ -4320,11 +4351,10 @@ app.post('/api/website/services', upload.none(), async (req, res) => {
   try {
     const insertQuery = `
       INSERT INTO service (
-        name, description, price, category, allow_installment,
-        installment_times, installment_interval, custom_interval_days
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        name, description, price, category, allow_installment, installment_times
+      ) VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING idservice, name, description, price, category,
-                allow_installment, installment_times, installment_interval, custom_interval_days
+                allow_installment, installment_times
     `;
 
     const insertValues = [
@@ -4333,51 +4363,31 @@ app.post('/api/website/services', upload.none(), async (req, res) => {
       price,
       category.trim(),
       allow_installment,
-      allow_installment ? installment_times : null,
-      allow_installment ? installment_interval : null,
-      allow_installment && installment_interval === 'custom' ? custom_interval_days : null
+      allow_installment ? installment_times : null
     ];
-
-    console.log("📤 Inserting into DB with values:", insertValues);
 
     const result = await pool.query(insertQuery, insertValues);
     const service = result.rows[0];
 
-    console.log("✅ Service added successfully:", service);
-
     // Log admin activity
-    try {
-      console.log("📝 Logging admin activity for adminId:", adminId);
+    await logActivity(
+      adminId || null,
+      'ADD',
+      'service',
+      service.idservice,
+      `Added new service: ${service.name} (${service.category})`,
+      {
+        primary_key: 'idservice',
+        table: 'service',
+        data: service
+      }
+    );
 
-      await logActivity(
-        adminId || null,
-        'ADD',
-        'service',
-        service.idservice,
-        `Added new service: ${service.name} (${service.category})`,
-        {
-          primary_key: 'idservice',
-          table: 'service',
-          data: service
-        }
-      );
-
-      console.log("📘 Admin activity logged.");
-    } catch (logError) {
-      console.error("❌ Error logging admin activity:", logError);
-    }
-
-    // Notifications
-    console.log("🔔 Checking for users with FCM tokens...");
-
+    // Notifications (unchanged)
     const tokensResult = await pool.query(`SELECT fcm_token FROM users WHERE fcm_token IS NOT NULL`);
     const tokens = tokensResult.rows.map(r => r.fcm_token).filter(t => t && t.trim().length > 0);
 
-    console.log(`📊 Found ${tokens.length} tokens.`);
-
     if (tokens.length === 0) {
-      console.log("⚠️ No users with FCM tokens.");
-
       return res.status(201).json({
         message: 'Service added successfully',
         service,
@@ -4394,30 +4404,17 @@ app.post('/api/website/services', upload.none(), async (req, res) => {
       android: { notification: { channelId: 'appointment_channel_id', priority: 'high' } }
     };
 
-    console.log("📨 Sending FCM notifications...");
-
     const MAX_BATCH = 500;
     let totalSuccess = 0;
 
     for (let i = 0; i < tokens.length; i += MAX_BATCH) {
       const batch = tokens.slice(i, i + MAX_BATCH);
-
-      console.log(`📦 Sending batch ${i / MAX_BATCH + 1}: ${batch.length} tokens`);
-
       const response = await admin.messaging().sendEachForMulticast({
         tokens: batch,
         ...notificationPayload
       });
-
       totalSuccess += response.successCount;
-      console.log(`📩 Batch sent: ${response.successCount}/${batch.length} successes`);
-
-      response.responses.forEach((resp, idx) => {
-        if (!resp.success) console.warn(`❌ Failed for token ${batch[idx]}:`, resp.error?.message);
-      });
     }
-
-    console.log("🎉 Notification sending complete.");
 
     return res.status(201).json({
       message: 'Service added and notifications sent successfully',
@@ -4435,6 +4432,7 @@ app.post('/api/website/services', upload.none(), async (req, res) => {
     });
   }
 });
+
 
 
 
