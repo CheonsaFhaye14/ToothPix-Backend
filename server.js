@@ -3981,6 +3981,53 @@ app.get('/api/website/appointments', async (req, res) => {
   }
 });
 
+app.get('/api/website/appointmentsforcalendar', async (req, res) => {
+  const fetchQuery = `
+    SELECT
+      a.idappointment,
+      a.idpatient,
+      (u.firstname || ' ' || u.lastname) AS patientfullname,
+      a.iddentist,
+      (d.firstname || ' ' || d.lastname) AS dentistfullname,
+      CASE 
+        WHEN a.idpatient IS NOT NULL THEN NULL
+        ELSE a.patient_name
+      END AS patient_name,
+      a.date,
+      a.notes,
+      a.created_at,
+      a.status,
+      -- Aggregate services for the appointment
+      json_agg(
+        json_build_object(
+          'idservice', s.idservice,
+          'name', s.name
+        )
+      ) FILTER (WHERE s.idservice IS NOT NULL) AS services
+    FROM appointment a
+    LEFT JOIN users u ON a.idpatient = u.idusers
+    LEFT JOIN users d ON a.iddentist = d.idusers
+    LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment
+    LEFT JOIN service s ON aps.idservice = s.idservice
+    WHERE a.is_deleted = FALSE
+    GROUP BY a.idappointment, u.firstname, u.lastname, d.firstname, d.lastname
+    ORDER BY a.date ASC, a.idappointment ASC
+  `;
+
+  try {
+    const result = await pool.query(fetchQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No appointments found' });
+    }
+
+    return res.status(200).json({ appointments: result.rows });
+  } catch (err) {
+    console.error('Error fetching appointments:', err.message);
+    return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
+  }
+});
+
 
 // In-memory refresh token store (for demo; move to DB for production)
 let refreshTokensStore = [];
@@ -4440,6 +4487,59 @@ app.get('/api/website/services', async (req, res) => {
     return res.status(500).json({ message: 'Error fetching services', error: err.message });
   }
 });
+app.get('/api/website/patients', async (req, res) => {
+  const query = `
+    SELECT DISTINCT idusers, firstname, lastname, 
+           CONCAT(firstname, ' ', lastname) AS fullname
+    FROM users
+    WHERE is_deleted = FALSE
+      AND usertype = 'patient'
+      AND firstname IS NOT NULL
+      AND lastname IS NOT NULL
+
+    UNION
+
+    SELECT DISTINCT NULL::int AS idusers, NULL::text AS firstname, NULL::text AS lastname,
+           patient_name AS fullname
+    FROM appointment
+    WHERE is_deleted = FALSE
+      AND patient_name IS NOT NULL
+
+    UNION
+
+    SELECT DISTINCT NULL::int AS idusers, NULL::text AS firstname, NULL::text AS lastname,
+           a.patient_name AS fullname
+    FROM records r
+    JOIN appointment a ON r.idappointment = a.idappointment
+    WHERE r.is_deleted = FALSE
+      AND a.is_deleted = FALSE
+      AND a.patient_name IS NOT NULL
+
+    ORDER BY fullname;
+  `;
+
+  try {
+    const result = await pool.query(query);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No patients found' });
+    }
+
+    return res.status(200).json({
+      patients: result.rows.map(r => ({
+        idusers: r.idusers,
+        firstname: r.firstname,
+        lastname: r.lastname,
+        fullname: r.fullname
+      }))
+    });
+  } catch (err) {
+    console.error('Error fetching patients:', err.message);
+    return res.status(500).json({ message: 'Error fetching patients', error: err.message });
+  }
+});
+
+
 
 // Get all services route (excluding soft-deleted)
 app.get('/api/website/services', async (req, res) => {
@@ -4620,7 +4720,7 @@ app.delete('/api/website/services/:id', async (req, res) => {
 // 🗑️ Soft-delete a user and log the activity
 app.delete('/api/website/users/:id', async (req, res) => {
   const userId = req.params.id; 
-  const adminId = req.userId; // From auth middleware
+  const { adminId } = req.body;
 
   try {
     // 1️⃣ Get existing user data before deleting
