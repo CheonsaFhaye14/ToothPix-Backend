@@ -2308,61 +2308,69 @@ app.delete('/api/website/appointments/:id', async (req, res) => {
 
 app.get('/api/website/record', async (req, res) => {
   const query = `
-    WITH appointment_info AS (
-      SELECT
-        a.idappointment,
-        a.date,
-        a.status,
-        CASE
-          WHEN p.idusers IS NOT NULL THEN
-            CASE 
-              WHEN p.is_deleted THEN 'Deleted User'
-              ELSE CONCAT(p.firstname, ' ', p.lastname)
-            END
-          ELSE COALESCE(a.patient_name, 'Unknown Patient')
-        END AS patient_name,
-        CONCAT(d.firstname, ' ', d.lastname) || CASE WHEN d.is_deleted THEN ' (Deleted)' ELSE '' END AS dentist_name
-      FROM appointment a
-      LEFT JOIN users p ON a.idpatient = p.idusers
-      LEFT JOIN users d ON a.iddentist = d.idusers
-      WHERE a.is_deleted = FALSE
-        AND a.status = 'completed'
-    ),
-    services_info AS (
-      SELECT
-        aps.idappointment,
-        json_agg(
-          json_build_object(
-            'idservice', s.idservice,
-            'name', s.name || CASE WHEN s.is_deleted THEN ' (Deleted)' ELSE '' END,
-            'price', s.price
-          )
-        ) AS services,
-        SUM(s.price) AS total_price
-      FROM appointment_services aps
-      JOIN service s ON aps.idservice = s.idservice
-      WHERE s.is_deleted = FALSE
-      GROUP BY aps.idappointment
-    )
-    SELECT
-      ai.idappointment,
-      ai.date,
-      ai.patient_name,
-      ai.dentist_name,
-      COALESCE(si.services, '[]') AS services,
-      COALESCE(si.total_price, 0) AS total_price,
-      r.idrecord,
-      r.treatment_notes,
-      r.paymentstatus,
-      r.total_paid
-    FROM appointment_info ai
-    JOIN records r 
-      ON r.idappointment = ai.idappointment 
-      AND r.is_deleted = FALSE  -- ✅ moved filter INSIDE join
-    LEFT JOIN services_info si 
-      ON ai.idappointment = si.idappointment
-    WHERE ai.idappointment IS NOT NULL
-    ORDER BY ai.date ASC;
+   WITH appointment_info AS (
+  SELECT
+    a.idappointment,
+    a.idpatient,              -- 👈 add patient ID
+    a.iddentist,              -- 👈 add dentist ID
+    a.date,
+    a.status,
+    a.notes,                  -- 👈 add notes
+    a.created_at,             -- 👈 add created_at
+    CASE
+      WHEN p.idusers IS NOT NULL THEN
+        CASE 
+          WHEN p.is_deleted THEN 'Deleted User'
+          ELSE CONCAT(p.firstname, ' ', p.lastname)
+        END
+      ELSE COALESCE(a.patient_name, 'Unknown Patient')
+    END AS patient_name,
+    CONCAT(d.firstname, ' ', d.lastname) || CASE WHEN d.is_deleted THEN ' (Deleted)' ELSE '' END AS dentist_name
+  FROM appointment a
+  LEFT JOIN users p ON a.idpatient = p.idusers
+  LEFT JOIN users d ON a.iddentist = d.idusers
+  WHERE a.is_deleted = FALSE
+    AND a.status = 'completed'
+),
+services_info AS (
+  SELECT
+    aps.idappointment,
+    json_agg(
+     json_build_object(
+  'idservice', s.idservice,
+  'name', s.name || (CASE WHEN s.is_deleted THEN ' (Deleted)' ELSE '' END),
+  'price', s.price
+)
+    ) AS services,
+    SUM(s.price) AS total_price
+  FROM appointment_services aps
+  JOIN service s ON aps.idservice = s.idservice
+  WHERE s.is_deleted = FALSE
+  GROUP BY aps.idappointment
+)
+SELECT
+  ai.idappointment,
+  ai.idpatient,         
+  ai.patient_name,
+  ai.iddentist,         
+  ai.dentist_name,
+  ai.date,
+  ai.status,                       
+  ai.created_at,         
+  COALESCE(si.services, '[]') AS services,
+  COALESCE(si.total_price, 0) AS total_price,
+  r.idrecord,
+  r.treatment_notes,
+  r.paymentstatus,
+  r.total_paid
+FROM appointment_info ai
+JOIN records r 
+  ON r.idappointment = ai.idappointment 
+  AND r.is_deleted = FALSE
+LEFT JOIN services_info si 
+  ON ai.idappointment = si.idappointment
+WHERE ai.idappointment IS NOT NULL
+ORDER BY ai.date ASC;
   `;
 
   try {
@@ -4116,35 +4124,38 @@ ORDER BY a.date ASC, a.idappointment ASC;
 
 app.get('/api/website/appointmentsforcalendar', async (req, res) => {
   const fetchQuery = `
-    SELECT
-      a.idappointment,
-      a.idpatient,
-      (u.firstname || ' ' || u.lastname) AS patientfullname,
-      a.iddentist,
-      (d.firstname || ' ' || d.lastname) AS dentistfullname,
-      CASE 
-        WHEN a.idpatient IS NOT NULL THEN NULL
-        ELSE a.patient_name
-      END AS patient_name,
-      a.date,
-      a.notes,
-      a.created_at,
-      a.status,
-      -- Aggregate services for the appointment
-      json_agg(
-        json_build_object(
-          'idservice', s.idservice,
-          'name', s.name
-        )
-      ) FILTER (WHERE s.idservice IS NOT NULL) AS services
-    FROM appointment a
-    LEFT JOIN users u ON a.idpatient = u.idusers
-    LEFT JOIN users d ON a.iddentist = d.idusers
-    LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment
-    LEFT JOIN service s ON aps.idservice = s.idservice
-    WHERE a.is_deleted = FALSE
-    GROUP BY a.idappointment, u.firstname, u.lastname, d.firstname, d.lastname
-    ORDER BY a.date ASC, a.idappointment ASC
+  SELECT
+  a.idappointment,
+  a.idpatient,
+  (u.firstname || ' ' || u.lastname) AS patientfullname,
+  a.iddentist,
+  (d.firstname || ' ' || d.lastname) AS dentistfullname,
+  CASE 
+    WHEN a.idpatient IS NOT NULL THEN NULL
+    ELSE a.patient_name
+  END AS patient_name,
+  a.date,
+  a.notes,
+  a.created_at,
+  a.status,
+  MAX(r.treatment_notes) AS treatment_notes,   -- 👈 include treatment notes if record exists
+  json_agg(
+    json_build_object(
+      'idservice', s.idservice,
+      'name', s.name
+    )
+  ) FILTER (WHERE s.idservice IS NOT NULL) AS services
+FROM appointment a
+LEFT JOIN users u ON a.idpatient = u.idusers
+LEFT JOIN users d ON a.iddentist = d.idusers
+LEFT JOIN appointment_services aps ON a.idappointment = aps.idappointment
+LEFT JOIN service s 
+  ON aps.idservice = s.idservice 
+  AND s.is_deleted = FALSE
+LEFT JOIN records r ON r.idappointment = a.idappointment AND r.is_deleted = FALSE
+WHERE a.is_deleted = FALSE
+GROUP BY a.idappointment, u.firstname, u.lastname, d.firstname, d.lastname
+ORDER BY a.date ASC, a.idappointment ASC;
   `;
 
   try {
