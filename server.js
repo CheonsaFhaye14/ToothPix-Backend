@@ -375,7 +375,7 @@ app.post(
 
       // -------- Insert into activity_logs --------
       await pool.query(
-        `INSERT INTO activity_logs (admin_id, action, record_id, timestamp)
+        `INSERT INTO activity_logs (admin_id, action, record_id, created_at)
          VALUES ($1, 'Uploaded BEFORE model', $2, NOW())`,
         [adminId, idrecord]
       );
