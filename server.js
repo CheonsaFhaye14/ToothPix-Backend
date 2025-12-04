@@ -318,9 +318,14 @@ app.post(
   ]),
   async (req, res) => {
     try {
-      const idrecord = req.body.idrecord; // Record ID from frontend
+      const idrecord = req.body.idrecord;
+      const adminId = req.body.admin_id;  // used ONLY for activity log
+
       if (!idrecord) {
         return res.status(400).json({ success: false, error: 'Missing record ID' });
+      }
+      if (!adminId) {
+        return res.status(400).json({ success: false, error: 'Missing admin ID' });
       }
 
       // -------- Upload GLTF file --------
@@ -344,6 +349,7 @@ app.post(
         const binFile = req.files['bin'][0];
         const binFileName = `DentalModel_${idrecord}.bin`;
         binPath = `models/${binFileName}`;
+
         await bucket.upload(binFile.path, {
           destination: binPath,
           contentType: 'application/octet-stream',
@@ -351,9 +357,14 @@ app.post(
         fs.unlinkSync(binFile.path);
       }
 
-      // -------- Store in PostgreSQL --------
+      // -------- Store/Update in dental_models --------
       await pool.query(
-        `INSERT INTO dental_models (idrecord, before_model_url, before_model_bin_url, before_uploaded_at)
+        `INSERT INTO dental_models (
+            idrecord,
+            before_model_url,
+            before_model_bin_url,
+            before_uploaded_at
+        )
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT (idrecord) DO UPDATE
          SET before_model_url = EXCLUDED.before_model_url,
@@ -362,19 +373,27 @@ app.post(
         [idrecord, gltfPath, binPath]
       );
 
-      // ✅ Success response
+      // -------- Insert into activity_logs --------
+      await pool.query(
+        `INSERT INTO activity_logs (admin_id, action, target_id, timestamp)
+         VALUES ($1, 'Uploaded BEFORE model', $2, NOW())`,
+        [adminId, idrecord]
+      );
+
       return res.json({
         success: true,
         message: 'Before model uploaded successfully',
         gltfPath,
-        binPath,
+        binPath
       });
+
     } catch (err) {
       console.error('Upload error:', err);
       return res.status(500).json({ success: false, error: err.message });
     }
   }
 );
+
 
 // 📌 Fetch dental model for a specific record and generate temporary access URLs
 app.get('/api/app/dental_models/:idrecord', async (req, res) => {
@@ -2782,153 +2801,168 @@ app.put('/api/app/users/:id', async (req, res) => {
   }
 });
 
-app.put('/api/website/users/:id', async (req, res) => {
-  const userId = req.params.id;
-  const adminId = req.body.admin_id; // Ideally from JWT
-  const {
-    username, email, password, usertype,
-    firstname, lastname, birthdate, contact,
-    address, gender, allergies, medicalhistory
-  } = req.body;
+app.put(
+  '/api/website/users/:id',
+  upload.fields([{ name: 'profile_image', maxCount: 1 }]),
+  async (req, res) => {
+    const userId = req.params.id;
+    const adminId = req.body.admin_id; // Ideally from JWT
+    const {
+      username, email, password, usertype,
+      firstname, lastname, birthdate, contact,
+      address, gender, allergies, medicalhistory
+    } = req.body;
 
-  console.log("📥 Incoming request to update user:", req.body);
+    console.log("📥 Incoming request to update user:", req.body);
 
-  // ✅ Basic validation
-  if (!username || !email || !firstname || !lastname || !usertype) {
-    console.error("❌ Required fields missing:", req.body);
-    return res.status(400).json({ message: 'Required fields missing' });
-  }
+    // ✅ Basic validation
+    if (!username || !email || !firstname || !lastname || !usertype) {
+      console.error("❌ Required fields missing:", req.body);
+      return res.status(400).json({ message: 'Required fields missing' });
+    }
 
-  const validUsertypes = ['patient', 'dentist', 'admin'];
-  if (!validUsertypes.includes(usertype.toLowerCase())) {
-    console.error("❌ Invalid usertype:", usertype);
-    return res.status(400).json({ message: 'Invalid usertype' });
-  }
+    const validUsertypes = ['patient', 'dentist', 'admin'];
+    if (!validUsertypes.includes(usertype.toLowerCase())) {
+      console.error("❌ Invalid usertype:", usertype);
+      return res.status(400).json({ message: 'Invalid usertype' });
+    }
 
-  try {
-    // 1️⃣ Fetch existing user
-    let existingUser;
     try {
-      const userResult = await pool.query('SELECT * FROM users WHERE idusers = $1', [userId]);
+      // 1️⃣ Fetch existing user
+      const userResult = await pool.query(
+        'SELECT * FROM users WHERE idusers = $1 AND is_deleted = FALSE',
+        [userId]
+      );
       if (userResult.rows.length === 0) {
         console.warn(`⚠️ User not found — ID: ${userId}`);
         return res.status(404).json({ message: 'User not found' });
       }
-      existingUser = userResult.rows[0];
+      const existingUser = userResult.rows[0];
       console.log("✅ Existing user fetched:", existingUser);
-    } catch (err) {
-      console.error('❌ Error fetching user:', err.message);
-      return res.status(500).json({ message: 'Database error fetching user', error: err.message });
-    }
 
-    // 2️⃣ Check unique username
-    try {
+      // 2️⃣ Check unique username
       const usernameCheck = await pool.query(
         'SELECT * FROM users WHERE username = $1 AND idusers != $2 AND is_deleted = FALSE',
         [username, userId]
       );
       if (usernameCheck.rows.length > 0) {
-        console.warn(`⚠️ Username already exists: ${username}`);
         return res.status(409).json({ message: 'Username already exists' });
       }
-    } catch (err) {
-      console.error('❌ Error checking username uniqueness:', err.message);
-      return res.status(500).json({ message: 'Database error checking username', error: err.message });
-    }
 
-    // 3️⃣ Check unique email
-    try {
+      // 3️⃣ Check unique email
       const emailCheck = await pool.query(
         'SELECT * FROM users WHERE email = $1 AND idusers != $2 AND is_deleted = FALSE',
         [email, userId]
       );
       if (emailCheck.rows.length > 0) {
-        console.warn(`⚠️ Email already exists: ${email}`);
         return res.status(409).json({ message: 'Email already exists' });
       }
-    } catch (err) {
-      console.error('❌ Error checking email uniqueness:', err.message);
-      return res.status(500).json({ message: 'Database error checking email', error: err.message });
-    }
 
-    // 4️⃣ Handle password hashing if changed
-    let hashedPassword = existingUser.password;
-    if (password && !(await bcrypt.compare(password, existingUser.password))) {
-      try {
-        hashedPassword = await bcrypt.hash(password, 10);
-        console.log("🔐 Password hashed successfully");
-      } catch (err) {
-        console.error('❌ Error hashing password:', err.message);
-        return res.status(500).json({ message: 'Error hashing password', error: err.message });
+      // 4️⃣ Handle password hashing if changed
+      let hashedPassword = existingUser.password;
+      if (password && password.trim() !== "") {
+        const samePassword = await bcrypt.compare(password, existingUser.password);
+        if (!samePassword) {
+          hashedPassword = await bcrypt.hash(password, 10);
+          console.log("🔐 Password hashed successfully");
+        }
       }
-    }
 
-    // 5️⃣ Update user
-    let updatedUser;
-    try {
+  // 5️⃣ Handle profile image upload or removal
+let profileImagePath = null; // default to null if nothing is sent
+const profileFiles = req.files['profile_image'];
+
+if (profileFiles && profileFiles.length > 0) {
+  const file = profileFiles[0];
+  const fileName = `profiles/Profile_${username}_${Date.now()}${path.extname(file.originalname)}`;
+  profileImagePath = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+
+  try {
+    console.log("⬆️ Uploading new profile image to bucket at:", profileImagePath);
+    await bucket.upload(file.path, {
+      destination: fileName,
+      contentType: file.mimetype,
+    });
+    fs.unlinkSync(file.path);
+    console.log("✅ Profile image uploaded successfully");
+  } catch (fileError) {
+    return res.status(500).json({
+      message: 'Error uploading profile image',
+      error: fileError.message
+    });
+  }
+} else {
+  console.log("ℹ️ No profile image provided, clearing existing one.");
+  profileImagePath = null; // ✅ explicitly clear DB column
+}
+
+
+      // 6️⃣ Update user
       const updateQuery = `
         UPDATE users
         SET username=$1, email=$2, password=$3, usertype=$4,
             firstname=$5, lastname=$6, birthdate=$7, contact=$8,
             address=$9, gender=$10, allergies=$11, medicalhistory=$12,
-            updated_at=NOW()
-        WHERE idusers=$13 RETURNING *;
+            profile_image=$13, updated_at=NOW()
+        WHERE idusers=$14 RETURNING *;
       `;
       const values = [
-        username, email, hashedPassword, usertype.toLowerCase(),
-        firstname, lastname, birthdate, contact, address, gender,
-        allergies, medicalhistory, userId
+        username || existingUser.username,
+        email || existingUser.email,
+        hashedPassword,
+        usertype ? usertype.toLowerCase() : existingUser.usertype,
+        firstname || existingUser.firstname,
+        lastname || existingUser.lastname,
+        birthdate || existingUser.birthdate,
+        contact || existingUser.contact,
+        address || existingUser.address,
+        gender || existingUser.gender,
+        allergies || existingUser.allergies,
+        medicalhistory || existingUser.medicalhistory,
+        profileImagePath,
+        userId
       ];
       const result = await pool.query(updateQuery, values);
-      updatedUser = result.rows[0];
+      const updatedUser = result.rows[0];
       console.log("✅ User updated successfully:", updatedUser);
-    } catch (err) {
-      console.error('❌ Error updating user:', err.message);
-      return res.status(500).json({ message: 'Database error updating user', error: err.message });
+
+      // 7️⃣ Log activity if changes detected
+      const changes = { idusers: existingUser.idusers };
+      const changedFields = [];
+      [
+        'username','email','usertype','firstname','lastname','birthdate',
+        'contact','address','gender','allergies','medicalhistory','profile_image'
+      ].forEach(field => {
+        if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
+          changes[field] = existingUser[field];
+          changedFields.push(field);
+        }
+      });
+
+      if (changedFields.length > 0) {
+        const description = `Updated user ${updatedUser.firstname} ${updatedUser.lastname} (${changedFields.join(', ')})`;
+        try {
+          await logActivity(adminId, 'EDIT', 'users', userId, description, {
+            primary_key: 'idusers',
+            table: 'users',
+            data: changes
+          });
+          console.log("✅ Activity logged successfully for user ID:", userId);
+        } catch (err) {
+          console.error('❌ Error logging activity:', err.message);
+        }
+      }
+
+      return res.status(200).json({ message: 'User updated successfully', user: updatedUser });
+
+    } catch (error) {
+      console.error('💥 Unexpected error updating user:', error.message);
+      return res.status(500).json({ message: 'Unexpected error updating user', error: error.message });
     }
-
-// 6️⃣ Prepare undo changes
-const changes = { idusers: existingUser.idusers }; // include primary key
-const changedFields = [];
-
-['username','email','usertype','firstname','lastname','birthdate','contact','address','gender','allergies','medicalhistory'].forEach(field => {
-  if (existingUser[field]?.toString() !== updatedUser[field]?.toString()) {
-    changes[field] = existingUser[field]; // old value for undo
-    changedFields.push(field);
   }
-});
+);
 
-    
-// 🛑 If no changes, skip logging and return early
-if (changedFields.length === 0) {
-  console.log("⚠️ No visible changes — skipping activity log");
-  return res.status(200).json({ message: 'No changes detected', user: updatedUser });
-}
-const description = changedFields.length > 0
-  ? `Updated user ${firstname} ${lastname} (${changedFields.join(', ')})`
-  : `Updated user ${firstname} ${lastname} (no visible changes)`;
 
-// 7️⃣ Log activity with proper undo_data structure
-try {
-  console.log("🪵 Logging activity...");
- await logActivity(adminId, 'EDIT', 'users', userId, description, {
-  primary_key: 'idusers',
-  table: 'users',     // optional but keeps logs uniform
-  data: changes
-});
-  console.log("✅ Activity logged successfully for user ID:", userId);
-} catch (err) {
-  console.error('❌ Error logging activity:', err.message);
-}
-
-console.log("🚀 Returning success response");
-return res.status(200).json({ message: 'User updated successfully', user: updatedUser });
-
-  } catch (error) {
-    console.error('💥 Unexpected error updating user:', error.message);
-    return res.status(500).json({ message: 'Unexpected error updating user', error: error.message });
-  }
-});
 
 app.post('/api/website/activity_logs/undo/:logId', async (req, res) => {
   const logId = req.params.logId;
@@ -3328,8 +3362,9 @@ app.post(
 
         try {
           // Construct path in Google Cloud bucket
-          const fileName = `profiles/Profile_${username}_${Date.now()}${path.extname(file.originalname)}`;
-          profileImagePath = fileName;
+const fileName = `profiles/Profile_${username}_${Date.now()}${path.extname(file.originalname)}`;
+profileImagePath = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+
 
           console.log("⬆️ Uploading profile image to bucket at:", profileImagePath);
 
@@ -3655,11 +3690,31 @@ app.get('/api/website/users', async (req, res) => {
       return res.status(404).json({ message: 'No users found' });
     }
 
-    // Format birthdate to YYYY-MM-DD
-    const users = result.rows.map(user => ({
-      ...user,
-      birthdate: user.birthdate ? user.birthdate.toISOString().split('T')[0] : null
-    }));
+    // Format birthdate and generate signed URL for profile_image
+    const users = await Promise.all(
+      result.rows.map(async user => {
+        const formattedUser = {
+          ...user,
+          birthdate: user.birthdate ? user.birthdate.toISOString().split('T')[0] : null,
+        };
+
+        if (user.profile_image) {
+          try {
+            // Generate a signed URL valid for 1 hour
+            const [url] = await bucket.file(user.profile_image).getSignedUrl({
+              action: 'read',
+              expires: Date.now() + 1000 * 60 * 60, // 1 hour
+            });
+            formattedUser.profile_image = url;
+          } catch (err) {
+            console.error("Error generating signed URL:", err.message);
+            formattedUser.profile_image = null;
+          }
+        }
+
+        return formattedUser;
+      })
+    );
 
     return res.status(200).json({ records: users });
   } catch (err) {
@@ -4016,13 +4071,32 @@ app.get('/api/app/appointments', async (req, res) => {
   }
 });
 
-// ✅ Get all appointments, sorted by date ascending
+// ✅ Get all appointments with services, sorted by date ascending
 app.get('/api/website/appointments', async (req, res) => {
   const fetchQuery = `
-    SELECT *
-    FROM appointment
-    WHERE is_deleted = FALSE
-    ORDER BY date ASC, idappointment ASC
+ SELECT 
+  a.idappointment,
+  a.idpatient,
+  a.iddentist,
+  a.date,
+  a.status,
+  a.notes,
+  a.created_at,
+  a.updated_at,
+  COALESCE(
+    JSON_AGG(
+      JSON_BUILD_OBJECT('idservice', s.idservice, 'name', s.name)
+    ) FILTER (WHERE s.idservice IS NOT NULL),
+    '[]'
+  ) AS services
+FROM appointment a
+LEFT JOIN appointment_services aps 
+  ON aps.idappointment = a.idappointment
+LEFT JOIN service s 
+  ON aps.idservice = s.idservice AND s.is_deleted = FALSE
+WHERE a.is_deleted = FALSE
+GROUP BY a.idappointment
+ORDER BY a.date ASC, a.idappointment ASC;
   `;
 
   try {
@@ -4038,6 +4112,7 @@ app.get('/api/website/appointments', async (req, res) => {
     return res.status(500).json({ message: 'Error fetching appointments', error: err.message });
   }
 });
+
 
 app.get('/api/website/appointmentsforcalendar', async (req, res) => {
   const fetchQuery = `
@@ -4560,23 +4635,49 @@ app.get('/api/website/services', async (req, res) => {
 });
 
 // Route to update an existing service
-app.put('/api/website/services/:id', async (req, res) => {
+app.put('/api/website/services/:id', upload.none(), async (req, res) => {
   const serviceId = req.params.id;
-  const adminId = req.body.admin_id;
-  const { name, description, price } = req.body;
+  const body = Array.isArray(req.body) ? Object.fromEntries(req.body) : req.body;
 
-  // ✅ Validate name
+  let {
+    name,
+    description,
+    price,
+    category,
+    admin_id,
+    allow_installment,
+    installment_times
+  } = body;
+
+  // Convert types
+  price = price !== undefined ? parseFloat(price) : undefined;
+  allow_installment = allow_installment === 'true' || allow_installment === true;
+  installment_times = installment_times !== undefined ? Number(installment_times) : undefined;
+
+  // VALIDATIONS
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     return res.status(400).json({ message: 'Name is required and must be a non-empty string.' });
   }
 
-  // ✅ Validate price
   if (price === undefined || isNaN(price)) {
     return res.status(400).json({ message: 'Price is required and must be a valid number.' });
   }
 
+  if (!category || typeof category !== 'string' || category.trim().length === 0) {
+    return res.status(400).json({ message: 'Category is required and must be a non-empty string.' });
+  }
+
+  if (allow_installment) {
+    if (installment_times === undefined || isNaN(installment_times)) {
+      return res.status(400).json({ message: 'Installment Count is required and must be a number.' });
+    }
+    if (!Number.isInteger(installment_times) || installment_times < 1) {
+      return res.status(400).json({ message: 'Installment Count must be a positive whole number.' });
+    }
+  }
+
   try {
-    // 1️⃣ Fetch existing service
+    // Fetch existing service
     const serviceResult = await pool.query(
       'SELECT * FROM service WHERE idservice = $1 AND is_deleted = FALSE',
       [serviceId]
@@ -4587,59 +4688,53 @@ app.put('/api/website/services/:id', async (req, res) => {
 
     const existingService = serviceResult.rows[0];
 
-    // 2️⃣ Update service
+    // Update service
     const updateQuery = `
       UPDATE service
-      SET name = $1, description = $2, price = $3, updated_at = NOW()
-      WHERE idservice = $4
-      RETURNING idservice, name, description, price, category
+      SET name = $1, description = $2, price = $3, category = $4,
+          allow_installment = $5, installment_times = $6, updated_at = NOW()
+      WHERE idservice = $7
+      RETURNING idservice, name, description, price, category,
+                allow_installment, installment_times
     `;
     const updateResult = await pool.query(updateQuery, [
       name.trim(),
       description || null,
-      parseFloat(price),
+      price,
+      category.trim(),
+      allow_installment,
+      allow_installment ? installment_times : null,
       serviceId
     ]);
 
     const updatedService = updateResult.rows[0];
 
-   // 3️⃣ Compare fields for changes
-const changes = { idservice: existingService.idservice }; // <-- include PK
-
-['name', 'description', 'price'].forEach(field => {
-  if (existingService[field]?.toString() !== updatedService[field]?.toString()) {
-    changes[field] = existingService[field]; // old value for undo
-  }
-});
-
-
-    // 4️⃣ Log activity if there were changes
-    try {
-      if (Object.keys(changes).length > 0) {
-        const undoData = {
-          primary_key: 'idservice',
-          table: 'service',
-          data: changes
-        };
-
-        await logActivity(
-          adminId || null,
-          'EDIT',
-          'service',
-          serviceId,
-          `Updated service ${existingService.name} (fields: ${Object.keys(changes).join(', ')})`,
-          undoData
-        );
-
-        console.log('🪵 Activity logged successfully for service update.');
-      } else {
-        console.log('⚠️ No changes detected, skipping activity log.');
+    // Compare fields for changes
+    const changes = { idservice: existingService.idservice };
+    ['name', 'description', 'price', 'category', 'allow_installment', 'installment_times'].forEach(field => {
+      if (existingService[field]?.toString() !== updatedService[field]?.toString()) {
+        changes[field] = existingService[field]; // old value for undo
       }
-    } catch (logErr) {
-      console.error('❌ Error logging activity:', logErr.message);
+    });
+
+    // Log activity if changes
+    if (Object.keys(changes).length > 1) {
+      const undoData = {
+        primary_key: 'idservice',
+        table: 'service',
+        data: changes
+      };
+
+      await logActivity(
+        admin_id || null,
+        'EDIT',
+        'service',
+        serviceId,
+        `Updated service ${existingService.name} (fields: ${Object.keys(changes).join(', ')})`,
+        undoData
+      );
     }
 
-    // ✅ Return response
     return res.status(200).json({
       message: 'Service updated successfully',
       service: updatedService
