@@ -397,13 +397,12 @@ app.post(
 
 // 📌 Fetch dental model for a specific record and generate temporary access URLs
 app.get('/api/app/dental_models/:idrecord', async (req, res) => {
-  const { idrecord } = req.params; // Get record ID from URL
+  const { idrecord } = req.params;
   const query = 'SELECT * FROM dental_models WHERE idrecord = $1';
 
   try {
     const result = await pool.query(query, [idrecord]);
 
-    // If no record exists, return null model (not error)
     if (result.rows.length === 0) {
       console.log(`⚠️ No model found for record ${idrecord}`);
       return res.json({ model: null });
@@ -411,28 +410,51 @@ app.get('/api/app/dental_models/:idrecord', async (req, res) => {
 
     const row = result.rows[0];
 
-    // Generate signed URL for GLTF file (valid 10 minutes)
-    const [gltfSignedUrl] = await bucket.file(row.before_model_url).getSignedUrl({
-      action: 'read',
-      expires: Date.now() + 10 * 60 * 1000, // 10 minutes
-    });
+    // BEFORE signed URLs
+    let beforeGltfSignedUrl = null;
+    let beforeBinSignedUrl = null;
 
-    // Generate signed URL for BIN file if it exists
-    let binSignedUrl = null;
-    if (row.before_model_bin_url) {
-      [binSignedUrl] = await bucket.file(row.before_model_bin_url).getSignedUrl({
+    if (row.before_model_url) {
+      [beforeGltfSignedUrl] = await bucket.file(row.before_model_url).getSignedUrl({
         action: 'read',
         expires: Date.now() + 10 * 60 * 1000,
       });
     }
 
-    // ✅ Return in Flutter-compatible structure
+    if (row.before_model_bin_url) {
+      [beforeBinSignedUrl] = await bucket.file(row.before_model_bin_url).getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 10 * 60 * 1000,
+      });
+    }
+
+    // AFTER signed URLs
+    let afterGltfSignedUrl = null;
+    let afterBinSignedUrl = null;
+
+    if (row.after_model_url) {
+      [afterGltfSignedUrl] = await bucket.file(row.after_model_url).getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 10 * 60 * 1000,
+      });
+    }
+
+    if (row.after_model_bin_url) {
+      [afterBinSignedUrl] = await bucket.file(row.after_model_bin_url).getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 10 * 60 * 1000,
+      });
+    }
+
+    // ✅ Return both BEFORE and AFTER in Flutter-compatible structure
     return res.json({
       model: {
         id: row.id,
         idrecord: row.idrecord,
-        gltfUrl: gltfSignedUrl,
-        binUrl: binSignedUrl,
+        beforeGltfUrl: beforeGltfSignedUrl,
+        beforeBinUrl: beforeBinSignedUrl,
+        afterGltfUrl: afterGltfSignedUrl,
+        afterBinUrl: afterBinSignedUrl,
       },
     });
 
@@ -444,6 +466,7 @@ app.get('/api/app/dental_models/:idrecord', async (req, res) => {
     });
   }
 });
+
 
 // 📌 Generate payment report for all records (excluding deleted users, services, and appointments)
 app.get('/api/reports/payments', async (req, res) => {
@@ -5067,4 +5090,5 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
