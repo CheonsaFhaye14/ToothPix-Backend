@@ -2876,7 +2876,7 @@ app.put(
         }
       }
 
-  // 5️⃣ Handle profile image upload or removal
+ // 5️⃣ Handle profile image upload or removal
 let profileImagePath = null; // default to null if nothing is sent
 const profileFiles = req.files['profile_image'];
 
@@ -2888,7 +2888,7 @@ if (profileFiles && profileFiles.length > 0) {
   try {
     console.log("⬆️ Uploading new profile image to bucket at:", profileImagePath);
     await bucket.upload(file.path, {
-      destination: fileName,
+      destination: profileImagePath,   // ✅ same as POST
       contentType: file.mimetype,
     });
     fs.unlinkSync(file.path);
@@ -2903,7 +2903,6 @@ if (profileFiles && profileFiles.length > 0) {
   console.log("ℹ️ No profile image provided, clearing existing one.");
   profileImagePath = null; // ✅ explicitly clear DB column
 }
-
 
       // 6️⃣ Update user
       const updateQuery = `
@@ -4312,7 +4311,13 @@ app.post('/api/app/logout', async (req, res) => {
 app.get('/api/app/profile', authenticateToken, async (req, res) => {
   try {
     // Fetch user based on authenticated userId and is not soft-deleted
-    const getQuery = 'SELECT * FROM users WHERE idusers = $1 AND is_deleted = FALSE';
+    const getQuery = `
+      SELECT idusers, username, email, usertype, firstname, lastname,
+             birthdate, contact, address, gender, allergies, medicalhistory,
+             profile_image
+      FROM users
+      WHERE idusers = $1 AND is_deleted = FALSE
+    `;
     const result = await pool.query(getQuery, [req.userId]);
 
     if (result.rows.length === 0) {
@@ -4326,7 +4331,8 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
       ...user,
       birthdate: user.birthdate
         ? new Date(user.birthdate).toISOString().split('T')[0]
-        : null
+        : null,
+      profile_image: user.profile_image || null // ✅ include profile pic
     };
 
     // Remove sensitive fields before sending to client
