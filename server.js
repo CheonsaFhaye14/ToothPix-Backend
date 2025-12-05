@@ -4326,14 +4326,29 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
 
     const user = result.rows[0];
 
-    // Format birthdate to YYYY-MM-DD if available
-    const formattedUser = {
-      ...user,
-      birthdate: user.birthdate
-        ? new Date(user.birthdate).toISOString().split('T')[0]
-        : null,
-      profile_image: user.profile_image || null // ✅ include profile pic
-    };
+  // Format birthdate to YYYY-MM-DD if available
+const formattedUser = {
+  ...user,
+  birthdate: user.birthdate
+    ? new Date(user.birthdate).toISOString().split('T')[0]
+    : null,
+};
+
+if (user.profile_image) {
+  try {
+    const [url] = await bucket.file(user.profile_image).getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 1000 * 60 * 60, // 1 hour
+    });
+    formattedUser.profile_image = url;
+  } catch (err) {
+    console.error("Error generating signed URL:", err.message);
+    formattedUser.profile_image = null;
+  }
+} else {
+  formattedUser.profile_image = null;
+}
+
 
     // Remove sensitive fields before sending to client
     delete formattedUser.password;
@@ -4348,7 +4363,6 @@ app.get('/api/app/profile', authenticateToken, async (req, res) => {
     return res.status(500).json({ message: 'Error retrieving profile' });
   }
 });
-
 
 // Update profile route
 app.post('/api/app/profile', authenticateToken, async (req, res) => {
@@ -5053,3 +5067,4 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
