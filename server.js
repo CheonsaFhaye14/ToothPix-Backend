@@ -701,7 +701,6 @@ app.get('/api/reports/today-appointments', async (req, res) => {
   }
 });
 
-
 // API endpoint to fetch 3D dental models along with patient, dentist, and appointment info
 app.get('/api/website/3dmodels', async (req, res) => {
   const query = `
@@ -721,6 +720,7 @@ FROM records r
 JOIN appointment a 
   ON r.idappointment = a.idappointment 
   AND a.is_deleted = FALSE  -- only active appointments
+  AND a.status = 'completed'
 JOIN users p 
   ON a.idpatient = p.idusers 
   AND p.is_deleted = FALSE  -- only active patients
@@ -2418,7 +2418,6 @@ ORDER BY ai.date ASC;
 });
 
 
-
 app.get('/api/website/payment', async (req, res) => {
   const client = await pool.connect();
 
@@ -2433,6 +2432,7 @@ app.get('/api/website/payment', async (req, res) => {
       LEFT JOIN records r ON r.idappointment = a.idappointment
       WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
         AND a.is_deleted = FALSE
+        AND a.status = 'completed'   -- ✅ only completed appointments
         AND r.idappointment IS NULL;
     `;
     await client.query(insertMissingRecordsQuery);
@@ -2452,8 +2452,9 @@ app.get('/api/website/payment', async (req, res) => {
       )
       SELECT
         a.idappointment,
-        r.idrecord,  -- <--- include record ID here
+        r.idrecord,
         a.date,
+        a.status AS appointment_status,   -- ✅ include status in result
         CONCAT(d.firstname, ' ', d.lastname) AS dentist_name,
         CASE
           WHEN p.idusers IS NOT NULL AND p.is_deleted = FALSE 
@@ -2503,11 +2504,13 @@ app.get('/api/website/payment', async (req, res) => {
         ON it.idrecord = r.idrecord AND it.idservice = s.idservice
       WHERE a.date < NOW() AT TIME ZONE 'Asia/Manila'
         AND a.is_deleted = FALSE
+        AND a.status = 'completed'   -- ✅ only completed appointments
         AND r.paymentstatus <> 'paid'
       GROUP BY 
         a.idappointment, 
-        r.idrecord,  -- <--- include in GROUP BY
+        r.idrecord,
         a.date, 
+        a.status,   -- ✅ include in GROUP BY
         d.firstname, d.lastname,
         p.firstname, p.lastname, p.idusers, p.is_deleted,
         a.patient_name,
@@ -2521,7 +2524,7 @@ app.get('/api/website/payment', async (req, res) => {
     await client.query('COMMIT');
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'No unpaid/partial payment records found' });
+      return res.status(404).json({ message: 'No unpaid/partial payment records found for completed appointments' });
     }
 
     return res.status(200).json({
@@ -2540,6 +2543,7 @@ app.get('/api/website/payment', async (req, res) => {
     client.release();
   }
 });
+
 
 app.put('/api/website/payment/:id', async (req, res) => {
   const { id } = req.params;
@@ -5090,5 +5094,6 @@ app.delete('/api/website/activity_logs/:id', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`App Server running on port ${PORT}`);
 });
+
 
 
